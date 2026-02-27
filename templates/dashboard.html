@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <form method="get" action="/dashboard" class="selectors">
+    <label>Location
+      <select name="location_id" required>
+        <option value="">Select</option>
+        {% for loc in locations %}
+          <option value="{{ loc.id }}" {% if selected_location_id == loc.id %}selected{% endif %}>{{ loc.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Provider
+      <select name="provider_id" required>
+        <option value="">Select</option>
+        {% for provider in providers %}
+          <option value="{{ provider.id }}" {% if selected_provider_id == provider.id %}selected{% endif %}>{{ provider.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Date
+      <input type="date" name="visit_date" value="{{ selected_date }}" />
+    </label>
+    <button type="submit">Apply</button>
+  </form>
+</section>
+
+{% if current_user.role.value in ['fd', 'admin'] %}
+<section class="panel">
+  <h2>New Visit</h2>
+  <form method="post" action="/visits" class="inline-form">
+    <label>MRN <input type="text" name="mrn" required /></label>
+    <label>Location
+      <select name="location_id" required>
+        {% for loc in locations %}
+          <option value="{{ loc.id }}" {% if selected_location_id == loc.id %}selected{% endif %}>{{ loc.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Provider
+      <select name="provider_id" required>
+        {% for provider in providers %}
+          <option value="{{ provider.id }}" {% if selected_provider_id == provider.id %}selected{% endif %}>{{ provider.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Delay Note <input type="text" name="delay_note" /></label>
+    <button type="submit">Create Visit</button>
+  </form>
+</section>
+{% endif %}
+
+<section class="panel">
+  <h2>Queue</h2>
+  {% if not selected_location_id or not selected_provider_id %}
+    <p>Select both Location and Provider to view queue.</p>
+  {% else %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>MRN</th>
+          <th>Status</th>
+          <th>Arrived</th>
+          <th>Ready</th>
+          <th>Intake</th>
+          <th>Provider In</th>
+          <th>Provider Out</th>
+          <th>Lab</th>
+          <th>Checkout</th>
+          <th>Total (min)</th>
+          <th>Delay Note</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for row in visits %}
+        <tr>
+          <td>{{ row.visit.mrn }}</td>
+          <td>{{ row.status }}</td>
+          <td>{{ format_dt(row.visit.arrived_at) or '' }}</td>
+          <td>{{ format_dt(row.visit.ready_for_clinical_at) or '' }}</td>
+          <td>{{ format_dt(row.visit.intake_complete_at) or '' }}</td>
+          <td>{{ format_dt(row.visit.provider_in_at) or '' }}</td>
+          <td>{{ format_dt(row.visit.provider_out_at) or '' }}</td>
+          <td>{{ format_dt(row.visit.lab_complete_at) or '' }}</td>
+          <td>{{ format_dt(row.visit.checkout_at) or '' }}</td>
+          <td>{{ row.total_visit_min or '' }}</td>
+          <td>
+            {{ row.visit.delay_note or '' }}
+            {% if current_user.role.value in ['nurse', 'admin'] %}
+              <form method="post" action="/visits/{{ row.visit.id }}/delay-note" class="mini-form">
+                <input type="hidden" name="location_id" value="{{ selected_location_id }}" />
+                <input type="hidden" name="provider_id" value="{{ selected_provider_id }}" />
+                <input type="hidden" name="visit_date" value="{{ selected_date }}" />
+                <input type="text" name="delay_note" placeholder="Update note" />
+                <button type="submit">Save</button>
+              </form>
+            {% endif %}
+          </td>
+          <td>
+            {% if row.next_field %}
+              <form method="post" action="/visits/{{ row.visit.id }}/action" class="mini-form">
+                <input type="hidden" name="action_field" value="{{ row.next_field }}" />
+                <input type="hidden" name="location_id" value="{{ selected_location_id }}" />
+                <input type="hidden" name="provider_id" value="{{ selected_provider_id }}" />
+                <input type="hidden" name="visit_date" value="{{ selected_date }}" />
+                <button type="submit" {% if not row.next_enabled %}disabled{% endif %}>{{ row.next_label }}</button>
+              </form>
+              {% if row.alt_action_field %}
+              <form method="post" action="/visits/{{ row.visit.id }}/action" class="mini-form">
+                <input type="hidden" name="action_field" value="{{ row.alt_action_field }}" />
+                <input type="hidden" name="location_id" value="{{ selected_location_id }}" />
+                <input type="hidden" name="provider_id" value="{{ selected_provider_id }}" />
+                <input type="hidden" name="visit_date" value="{{ selected_date }}" />
+                <button type="submit">{{ row.alt_action_label }}</button>
+              </form>
+              {% endif %}
+            {% else %}
+              Complete
+            {% endif %}
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="12">No visits found.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

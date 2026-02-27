@@ -1,0 +1,224 @@
+from __future__ import annotations
+
+from datetime import date, datetime, time
+from io import BytesIO
+
+from openpyxl import Workbook
+from sqlalchemy.orm import Session
+
+from app.models import AuditLog, RoleEnum, User, Visit
+
+TIME_FIELDS = [
+    "arrived_at",
+    "ready_for_clinical_at",
+    "intake_complete_at",
+    "provider_in_at",
+    "provider_out_at",
+    "lab_complete_at",
+    "checkout_at",
+]
+
+FIELD_LABELS = {
+    "arrived_at": "Arrived",
+    "ready_for_clinical_at": "Ready for Clinical",
+    "intake_complete_at": "Intake Complete",
+    "provider_in_at": "Provider In",
+    "provider_out_at": "Provider Out",
+    "lab_complete_at": "Lab Complete",
+    "checkout_at": "Checkout",
+}
+
+ROLE_ACTIONS = {
+    RoleEnum.FD: {"arrived_at", "ready_for_clinical_at"},
+    RoleEnum.NURSE: {"intake_complete_at", "provider_in_at", "provider_out_at", "lab_complete_at", "checkout_at"},
+    RoleEnum.ADMIN: set(TIME_FIELDS),
+}
+
+
+class ValidationError(Exception):
+    pass
+
+
+def now_local() -> datetime:
+    return datetime.now()
+
+
+def can_set_field(visit: Visit, field_name: str) -> bool:
+    if getattr(visit, field_name) is not None:
+        return False
+
+    if field_name == "arrived_at":
+        return True
+    if field_name == "ready_for_clinical_at":
+        return visit.arrived_at is not None
+    if field_name == "intake_complete_at":
+        return visit.ready_for_clinical_at is not None
+    if field_name == "provider_in_at":
+        return visit.intake_complete_at is not None
+    if field_name == "provider_out_at":
+        return visit.provider_in_at is not None
+    if field_name == "lab_complete_at":
+        return visit.provider_out_at is not None
+    if field_name == "checkout_at":
+        if visit.provider_out_at is None:
+            return False
+        if visit.lab_complete_at is not None:
+            return True
+        return True
+    return False
+
+
+def get_next_field(visit: Visit) -> str | None:
+    if visit.arrived_at is None:
+        return "arrived_at"
+    if visit.ready_for_clinical_at is None:
+        return "ready_for_clinical_at"
+    if visit.intake_complete_at is None:
+        return "intake_complete_at"
+    if visit.provider_in_at is None:
+        return "provider_in_at"
+    if visit.provider_out_at is None:
+        return "provider_out_at"
+    if visit.lab_complete_at is None and visit.checkout_at is None:
+        return "lab_complete_at_or_checkout"
+    if visit.checkout_at is None:
+        return "checkout_at"
+    return None
+
+
+def current_status(visit: Visit) -> str:
+    next_field = get_next_field(visit)
+    if next_field is None:
+        return "Complete"
+    if next_field == "lab_complete_at_or_checkout":
+        return "Provider Out - Awaiting Lab or Checkout"
+    return f"Awaiting {FIELD_LABELS[next_field]}"
+
+
+def set_timestamp(visit: Visit, field_name: str, acting_user: User, db: Session) -> None:
+    if field_name not in TIME_FIELDS:
+        raise ValidationError("Invalid field.")
+
+    if field_name not in ROLE_ACTIONS[acting_user.role]:
+        raise ValidationError("You are not allowed to perform this action.")
+
+    if not can_set_field(visit, field_name):
+        raise ValidationError("Step is not valid or has already been completed.")
+
+    setattr(visit, field_name, now_local())
+    visit.updated_at = now_local()
+    db.add(visit)
+    db.commit()
+
+
+def update_delay_note(visit: Visit, note: str | None, acting_user: User, db: Session) -> None:
+    if acting_user.role not in {RoleEnum.NURSE, RoleEnum.ADMIN}:
+        raise ValidationError("You do not have permission to edit delay notes.")
+    visit.delay_note = note.strip() if note else None
+    visit.updated_at = now_local()
+    db.add(visit)
+    db.commit()
+
+
+def override_timestamp(
+    visit: Visit,
+    field_name: str,
+    new_value: datetime | None,
+    reason: str,
+    acting_user: User,
+    db: Session,
+) -> None:
+    if acting_user.role != RoleEnum.ADMIN:
+        raise ValidationError("Only admins can override timestamps.")
+    if field_name not in TIME_FIELDS:
+        raise ValidationError("Invalid timestamp field.")
+    if not reason.strip():
+        raise ValidationError("Reason is required.")
+
+    old_value = getattr(visit, field_name)
+    setattr(visit, field_name, new_value)
+    visit.updated_at = now_local()
+
+    audit = AuditLog(
+        visit_id=visit.id,
+        field_name=field_name,
+        old_value=format_dt(old_value),
+        new_value=format_dt(new_value),
+        changed_by_user_id=acting_user.id,
+        changed_at=now_local(),
+        reason=reason.strip(),
+    )
+    db.add(visit)
+    db.add(audit)
+    db.commit()
+
+
+def format_dt(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    return value.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def minutes_between(start: datetime | None, end: datetime | None) -> float | None:
+    if not start or not end:
+        return None
+    return round((end - start).total_seconds() / 60, 2)
+
+
+def build_export(
+    visits: list[Visit],
+) -> bytes:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "CycleTime"
+
+    headers = [
+        "MRN",
+        "Location",
+        "Provider",
+        "arrived_at",
+        "ready_for_clinical_at",
+        "intake_complete_at",
+        "provider_in_at",
+        "provider_out_at",
+        "lab_complete_at",
+        "checkout_at",
+        "registration_min",
+        "waiting_room_min",
+        "provider_wait_min",
+        "provider_duration_min",
+        "lab_duration_min",
+        "total_visit_min",
+    ]
+    ws.append(headers)
+
+    for visit in visits:
+        ws.append(
+            [
+                visit.mrn,
+                visit.location.name,
+                visit.provider.name,
+                format_dt(visit.arrived_at),
+                format_dt(visit.ready_for_clinical_at),
+                format_dt(visit.intake_complete_at),
+                format_dt(visit.provider_in_at),
+                format_dt(visit.provider_out_at),
+                format_dt(visit.lab_complete_at),
+                format_dt(visit.checkout_at),
+                minutes_between(visit.arrived_at, visit.ready_for_clinical_at),
+                minutes_between(visit.ready_for_clinical_at, visit.intake_complete_at),
+                minutes_between(visit.intake_complete_at, visit.provider_in_at),
+                minutes_between(visit.provider_in_at, visit.provider_out_at),
+                minutes_between(visit.provider_out_at, visit.lab_complete_at),
+                minutes_between(visit.arrived_at, visit.checkout_at),
+            ]
+        )
+
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    return bio.read()
+
+
+def day_range(day: date) -> tuple[datetime, datetime]:
+    return datetime.combine(day, time.min), datetime.combine(day, time.max)
