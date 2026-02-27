@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h2>Admin Search</h2>
+  <form method="get" action="/admin" class="inline-form">
+    <label>MRN <input type="text" name="mrn" value="{{ mrn }}" /></label>
+    <label>Date <input type="date" name="search_date" value="{{ search_date }}" /></label>
+    <button type="submit">Search</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Override Timestamp</h2>
+  <form method="post" action="/admin/override" class="inline-form">
+    <label>Visit
+      <select name="visit_id" required>
+        {% for visit in visits %}
+          <option value="{{ visit.id }}" {% if selected_visit_id == visit.id %}selected{% endif %}>#{{ visit.id }} - {{ visit.mrn }} ({{ format_dt(visit.created_at) }})</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Field
+      <select name="field_name" required>
+        {% for field in time_fields %}
+          <option value="{{ field }}">{{ field_labels[field] }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>New Date/Time (blank clears)
+      <input type="datetime-local" name="new_value" />
+    </label>
+    <label>Reason
+      <input type="text" name="reason" required />
+    </label>
+    <button type="submit">Override</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Audit Log{% if selected_visit_id %} for Visit #{{ selected_visit_id }}{% endif %}</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Changed At</th>
+        <th>User</th>
+        <th>Field</th>
+        <th>Old</th>
+        <th>New</th>
+        <th>Reason</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in audit_rows %}
+      <tr>
+        <td>{{ format_dt(row.changed_at) }}</td>
+        <td>{{ row.changed_by_user.username }}</td>
+        <td>{{ field_labels[row.field_name] }}</td>
+        <td>{{ row.old_value or '' }}</td>
+        <td>{{ row.new_value or '' }}</td>
+        <td>{{ row.reason }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6">No audit rows for selected visit.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

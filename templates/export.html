@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h2>Export to Excel</h2>
+  <form method="post" action="/export/download" class="inline-form">
+    <label>Start Date <input type="date" name="start_date" value="{{ today }}" required /></label>
+    <label>End Date <input type="date" name="end_date" value="{{ today }}" required /></label>
+    <label>Location
+      <select name="location_id">
+        <option value="">All</option>
+        {% for loc in locations %}
+          <option value="{{ loc.id }}">{{ loc.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Provider
+      <select name="provider_id">
+        <option value="">All</option>
+        {% for provider in providers %}
+          <option value="{{ provider.id }}">{{ provider.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button type="submit">Download Excel</button>
+  </form>
+</section>
+{% endblock %}
