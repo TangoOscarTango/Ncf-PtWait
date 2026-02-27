@@ -1,2 +1,2 @@
 # Ncf-PtWait
-Wait times
+Wait times 1
