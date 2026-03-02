@@ -2,7 +2,7 @@ from datetime import date, datetime
 from io import BytesIO
 from urllib.parse import urlencode
 
-from fastapi import Depends, FastAPI, Form, Request
+from fastapi import Depends, FastAPI, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -86,6 +86,10 @@ def ensure_user_preference_columns(db: Session) -> None:
         db.execute(text("ALTER TABLE users ADD COLUMN preferred_location_id INTEGER"))
     if "preferred_provider_id" not in columns:
         db.execute(text("ALTER TABLE users ADD COLUMN preferred_provider_id INTEGER"))
+    if "preferred_location_ids" not in columns:
+        db.execute(text("ALTER TABLE users ADD COLUMN preferred_location_ids TEXT"))
+    if "preferred_provider_ids" not in columns:
+        db.execute(text("ALTER TABLE users ADD COLUMN preferred_provider_ids TEXT"))
     db.commit()
 
 
@@ -100,13 +104,60 @@ def ensure_visit_delay_note_columns(db: Session) -> None:
     db.commit()
 
 
-def persist_user_context(user: User, location_id: int | None, provider_id: int | None, db: Session) -> None:
+def parse_id_csv(value: str | None) -> list[int]:
+    if not value:
+        return []
+    parsed: list[int] = []
+    for part in value.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            parsed.append(int(part))
+        except ValueError:
+            continue
+    return parsed
+
+
+def serialize_id_list(values: list[int]) -> str | None:
+    return ",".join(str(value) for value in values) if values else None
+
+
+def normalize_selected_ids(raw_values: list[int] | None, valid_ids: set[int]) -> list[int]:
+    normalized: list[int] = []
+    for value in raw_values or []:
+        if value in valid_ids and value not in normalized:
+            normalized.append(value)
+    return normalized
+
+
+def persisted_selected_ids(csv_value: str | None, fallback_value: int | None, valid_ids: set[int]) -> list[int]:
+    parsed = normalize_selected_ids(parse_id_csv(csv_value), valid_ids)
+    if parsed:
+        return parsed
+    if fallback_value in valid_ids:
+        return [fallback_value]
+    return []
+
+
+def persist_user_context(user: User, location_ids: list[int], provider_ids: list[int], db: Session) -> None:
     changed = False
-    if location_id is not None and user.preferred_location_id != location_id:
-        user.preferred_location_id = location_id
+    serialized_location_ids = serialize_id_list(location_ids)
+    serialized_provider_ids = serialize_id_list(provider_ids)
+    first_location_id = location_ids[0] if location_ids else None
+    first_provider_id = provider_ids[0] if provider_ids else None
+
+    if user.preferred_location_ids != serialized_location_ids:
+        user.preferred_location_ids = serialized_location_ids
         changed = True
-    if provider_id is not None and user.preferred_provider_id != provider_id:
-        user.preferred_provider_id = provider_id
+    if user.preferred_provider_ids != serialized_provider_ids:
+        user.preferred_provider_ids = serialized_provider_ids
+        changed = True
+    if user.preferred_location_id != first_location_id:
+        user.preferred_location_id = first_location_id
+        changed = True
+    if user.preferred_provider_id != first_provider_id:
+        user.preferred_provider_id = first_provider_id
         changed = True
     if changed:
         db.add(user)
@@ -115,31 +166,31 @@ def persist_user_context(user: User, location_id: int | None, provider_id: int |
 
 
 def build_filter_query(
-    location_id: int,
-    provider_id: int,
+    location_ids: list[int],
+    provider_ids: list[int],
     visit_date: str,
     search: str | None,
     hide_complete: bool,
 ) -> str:
     return urlencode(
-        {
-            "location_id": location_id,
-            "provider_id": provider_id,
-            "visit_date": visit_date,
-            "search": search or "",
-            "hide_complete": str(hide_complete).lower(),
-        }
+        [
+            *[("location_id", value) for value in location_ids],
+            *[("provider_id", value) for value in provider_ids],
+            ("visit_date", visit_date),
+            ("search", search or ""),
+            ("hide_complete", str(hide_complete).lower()),
+        ]
     )
 
 
 def dashboard_redirect_url(
-    location_id: int,
-    provider_id: int,
+    location_ids: list[int],
+    provider_ids: list[int],
     visit_date: str,
     search: str | None,
     hide_complete: bool,
 ) -> str:
-    return "/dashboard?" + build_filter_query(location_id, provider_id, visit_date, search, hide_complete)
+    return "/dashboard?" + build_filter_query(location_ids, provider_ids, visit_date, search, hide_complete)
 
 
 def parameters_page_context(request: Request, user: User, db: Session) -> dict:
@@ -209,8 +260,8 @@ def logout(request: Request):
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard(
     request: Request,
-    location_id: int | None = None,
-    provider_id: int | None = None,
+    location_id: list[int] | None = Query(default=None),
+    provider_id: list[int] | None = Query(default=None),
     visit_date: str | None = None,
     search: str | None = None,
     hide_complete: bool = False,
@@ -225,16 +276,24 @@ def dashboard(
     valid_location_ids = {location.id for location in locations}
     valid_provider_ids = {provider.id for provider in providers}
 
-    selected_location_id = location_id if location_id in valid_location_ids else None
-    selected_provider_id = provider_id if provider_id in valid_provider_ids else None
+    selected_location_ids = normalize_selected_ids(location_id, valid_location_ids)
+    selected_provider_ids = normalize_selected_ids(provider_id, valid_provider_ids)
 
-    if selected_location_id is None and user.preferred_location_id in valid_location_ids:
-        selected_location_id = user.preferred_location_id
-    if selected_provider_id is None and user.preferred_provider_id in valid_provider_ids:
-        selected_provider_id = user.preferred_provider_id
+    if not selected_location_ids:
+        selected_location_ids = persisted_selected_ids(
+            user.preferred_location_ids,
+            user.preferred_location_id,
+            valid_location_ids,
+        )
+    if not selected_provider_ids:
+        selected_provider_ids = persisted_selected_ids(
+            user.preferred_provider_ids,
+            user.preferred_provider_id,
+            valid_provider_ids,
+        )
 
-    if selected_location_id is not None or selected_provider_id is not None:
-        persist_user_context(user, selected_location_id, selected_provider_id, db)
+    if selected_location_ids or selected_provider_ids:
+        persist_user_context(user, selected_location_ids, selected_provider_ids, db)
 
     today = date.today()
     selected_date = today
@@ -248,14 +307,14 @@ def dashboard(
     search_text_lower = search_text.lower()
 
     visits = []
-    if selected_location_id and selected_provider_id:
+    if selected_location_ids and selected_provider_ids:
         start_dt, end_dt = day_range(selected_date)
         visits = (
             db.query(Visit)
             .options(joinedload(Visit.location), joinedload(Visit.provider))
             .filter(
-                Visit.location_id == selected_location_id,
-                Visit.provider_id == selected_provider_id,
+                Visit.location_id.in_(selected_location_ids),
+                Visit.provider_id.in_(selected_provider_ids),
                 Visit.created_at >= start_dt,
                 Visit.created_at <= end_dt,
             )
@@ -331,11 +390,13 @@ def dashboard(
             "current_user": user,
             "locations": locations,
             "providers": providers,
-            "selected_location_id": selected_location_id,
-            "selected_provider_id": selected_provider_id,
+            "selected_location_ids": selected_location_ids,
+            "selected_provider_ids": selected_provider_ids,
+            "selected_location_id": selected_location_ids[0] if selected_location_ids else None,
+            "selected_provider_id": selected_provider_ids[0] if selected_provider_ids else None,
             "clear_filter_query": (
-                build_filter_query(selected_location_id, selected_provider_id, selected_date.strftime("%Y-%m-%d"), None, False)
-                if selected_location_id and selected_provider_id
+                build_filter_query(selected_location_ids, selected_provider_ids, selected_date.strftime("%Y-%m-%d"), None, False)
+                if selected_location_ids and selected_provider_ids
                 else ""
             ),
             "selected_date": selected_date.strftime("%Y-%m-%d"),
@@ -344,6 +405,14 @@ def dashboard(
             "visits": prepared_visits,
             "flash": pop_flash(request),
             "format_dt": format_dt,
+            "selected_location_summary": ", ".join(
+                location.name for location in locations if location.id in set(selected_location_ids)
+            ) or "Choose Location",
+            "selected_provider_summary": ", ".join(
+                provider.name for provider in providers if provider.id in set(selected_provider_ids)
+            ) or "Choose Provider",
+            "location_picker_options": [{"value": location.id, "label": location.name} for location in locations],
+            "provider_picker_options": [{"value": provider.id, "label": provider.name} for provider in providers],
         },
     )
 
@@ -354,6 +423,8 @@ def create_visit(
     mrn: str = Form(...),
     location_id: int = Form(...),
     provider_id: int = Form(...),
+    filter_location_id: list[int] = Form(default=[]),
+    filter_provider_id: list[int] = Form(default=[]),
     visit_date: str | None = Form(default=None),
     search: str | None = Form(default=None),
     hide_complete: bool = Form(default=False),
@@ -366,14 +437,16 @@ def create_visit(
         set_flash(request, "error", "Only FD/Admin can create visits.")
         return RedirectResponse(url="/dashboard", status_code=303)
 
-    persist_user_context(user, location_id, provider_id, db)
+    persisted_location_ids = filter_location_id or [location_id]
+    persisted_provider_ids = filter_provider_id or [provider_id]
+    persist_user_context(user, persisted_location_ids, persisted_provider_ids, db)
 
     if not mrn.strip():
         set_flash(request, "error", "MRN is required.")
         return RedirectResponse(
             url=dashboard_redirect_url(
-                location_id,
-                provider_id,
+                persisted_location_ids,
+                persisted_provider_ids,
                 visit_date or date.today().strftime("%Y-%m-%d"),
                 search,
                 hide_complete,
@@ -394,8 +467,8 @@ def create_visit(
     set_flash(request, "success", f"Visit for MRN {visit.mrn} created.")
     return RedirectResponse(
         url=dashboard_redirect_url(
-            location_id,
-            provider_id,
+            persisted_location_ids,
+            persisted_provider_ids,
             visit_date or date.today().strftime("%Y-%m-%d"),
             search,
             hide_complete,
@@ -485,8 +558,8 @@ def visit_action(
     request: Request,
     visit_id: int,
     action_field: str = Form(...),
-    location_id: int = Form(...),
-    provider_id: int = Form(...),
+    filter_location_id: list[int] = Form(default=[]),
+    filter_provider_id: list[int] = Form(default=[]),
     visit_date: str = Form(...),
     delay_note: str | None = Form(default=None),
     search: str | None = Form(default=None),
@@ -497,7 +570,7 @@ def visit_action(
     if isinstance(user, RedirectResponse):
         return user
 
-    persist_user_context(user, location_id, provider_id, db)
+    persist_user_context(user, filter_location_id, filter_provider_id, db)
 
     visit = db.query(Visit).filter(Visit.id == visit_id).first()
     if not visit:
@@ -510,7 +583,7 @@ def visit_action(
             set_flash(request, "error", str(exc))
 
     return RedirectResponse(
-        url=dashboard_redirect_url(location_id, provider_id, visit_date, search, hide_complete),
+        url=dashboard_redirect_url(filter_location_id, filter_provider_id, visit_date, search, hide_complete),
         status_code=303,
     )
 

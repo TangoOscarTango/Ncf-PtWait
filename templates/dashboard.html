@@ -2,30 +2,26 @@
 {% block content %}
 <section class="panel">
   <form method="get" action="dashboard" class="selectors" id="dashboard-filters">
-    <input type="hidden" name="location_id" id="filter-location" value="{{ selected_location_id or '' }}" />
-    <input type="hidden" name="provider_id" id="filter-provider" value="{{ selected_provider_id or '' }}" />
-    <select id="location-options-source" class="sr-only" tabindex="-1" aria-hidden="true">
-      <option value="">Select</option>
-      {% for loc in locations %}
-        <option value="{{ loc.id }}" {% if selected_location_id == loc.id %}selected{% endif %}>{{ loc.name }}</option>
+    <div id="filter-location-inputs">
+      {% for location_id in selected_location_ids %}
+        <input type="hidden" name="location_id" value="{{ location_id }}" />
       {% endfor %}
-    </select>
-    <select id="provider-options-source" class="sr-only" tabindex="-1" aria-hidden="true">
-      <option value="">Select</option>
-      {% for provider in providers %}
-        <option value="{{ provider.id }}" {% if selected_provider_id == provider.id %}selected{% endif %}>{{ provider.name }}</option>
+    </div>
+    <div id="filter-provider-inputs">
+      {% for provider_id in selected_provider_ids %}
+        <input type="hidden" name="provider_id" value="{{ provider_id }}" />
       {% endfor %}
-    </select>
+    </div>
     <div class="filter-group">
       <span class="filter-label">Location</span>
       <button type="button" class="picker-button" id="open-location-picker">
-        {{ locations | selectattr('id', 'equalto', selected_location_id) | map(attribute='name') | first or 'Choose Location' }}
+        {{ selected_location_summary }}
       </button>
     </div>
     <div class="filter-group">
       <span class="filter-label">Provider</span>
       <button type="button" class="picker-button" id="open-provider-picker">
-        {{ providers | selectattr('id', 'equalto', selected_provider_id) | map(attribute='name') | first or 'Choose Provider' }}
+        {{ selected_provider_summary }}
       </button>
     </div>
     <label>Date
@@ -51,6 +47,12 @@
   <h2>New Visit</h2>
   <form method="post" action="visits" class="inline-form">
     <label>MRN <input type="text" name="mrn" required /></label>
+    {% for location_id in selected_location_ids %}
+      <input type="hidden" name="filter_location_id" value="{{ location_id }}" />
+    {% endfor %}
+    {% for provider_id in selected_provider_ids %}
+      <input type="hidden" name="filter_provider_id" value="{{ provider_id }}" />
+    {% endfor %}
     <input type="hidden" name="visit_date" value="{{ selected_date }}" />
     <input type="hidden" name="search" value="{{ search }}" />
     <input type="hidden" name="hide_complete" value="{{ 'true' if hide_complete else 'false' }}" />
@@ -75,8 +77,8 @@
 
 <section class="panel">
   <h2>Queue</h2>
-  {% if not selected_location_id or not selected_provider_id %}
-    <p>Select both Location and Provider to view queue.</p>
+  {% if not selected_location_ids or not selected_provider_ids %}
+    <p>Select at least one Location and one Provider to view queue.</p>
   {% else %}
   <div class="table-wrap">
     <table>
@@ -112,8 +114,12 @@
             {% if row.next_field %}
               <form method="post" action="visits/{{ row.visit.id }}/action" class="mini-form">
                 <input type="hidden" name="action_field" value="{{ row.next_field }}" />
-                <input type="hidden" name="location_id" value="{{ selected_location_id }}" />
-                <input type="hidden" name="provider_id" value="{{ selected_provider_id }}" />
+                {% for location_id in selected_location_ids %}
+                  <input type="hidden" name="filter_location_id" value="{{ location_id }}" />
+                {% endfor %}
+                {% for provider_id in selected_provider_ids %}
+                  <input type="hidden" name="filter_provider_id" value="{{ provider_id }}" />
+                {% endfor %}
                 <input type="hidden" name="visit_date" value="{{ selected_date }}" />
                 <input type="hidden" name="search" value="{{ search }}" />
                 <input type="hidden" name="hide_complete" value="{{ 'true' if hide_complete else 'false' }}" />
@@ -123,8 +129,12 @@
               {% if row.alt_action_field %}
               <form method="post" action="visits/{{ row.visit.id }}/action" class="mini-form">
                 <input type="hidden" name="action_field" value="{{ row.alt_action_field }}" />
-                <input type="hidden" name="location_id" value="{{ selected_location_id }}" />
-                <input type="hidden" name="provider_id" value="{{ selected_provider_id }}" />
+                {% for location_id in selected_location_ids %}
+                  <input type="hidden" name="filter_location_id" value="{{ location_id }}" />
+                {% endfor %}
+                {% for provider_id in selected_provider_ids %}
+                  <input type="hidden" name="filter_provider_id" value="{{ provider_id }}" />
+                {% endfor %}
                 <input type="hidden" name="visit_date" value="{{ selected_date }}" />
                 <input type="hidden" name="search" value="{{ search }}" />
                 <input type="hidden" name="hide_complete" value="{{ 'true' if hide_complete else 'false' }}" />
@@ -148,26 +158,23 @@
 <script>
   (() => {
     const form = document.getElementById("dashboard-filters");
-    const locationInput = document.getElementById("filter-location");
-    const providerInput = document.getElementById("filter-provider");
+    const locationInputs = document.getElementById("filter-location-inputs");
+    const providerInputs = document.getElementById("filter-provider-inputs");
     const searchInput = document.getElementById("filter-search");
     const hideCompleteInput = document.getElementById("filter-hide-complete");
     const visitDateInput = document.getElementById("filter-visit-date");
     const openLocationButton = document.getElementById("open-location-picker");
     const openProviderButton = document.getElementById("open-provider-picker");
-    const locationOptionsSource = document.getElementById("location-options-source");
-    const providerOptionsSource = document.getElementById("provider-options-source");
     let activePickerWindow = null;
+    const locationOptions = {{ location_picker_options | tojson }};
+    const providerOptions = {{ provider_picker_options | tojson }};
+    let selectedLocationIds = {{ selected_location_ids | tojson }};
+    let selectedProviderIds = {{ selected_provider_ids | tojson }};
 
     if (!form || !visitDateInput) {
       return;
     }
     let searchDebounce = null;
-
-    function selectedLabel(selectNode) {
-      const selectedOption = selectNode.options[selectNode.selectedIndex];
-      return selectedOption && selectedOption.value ? selectedOption.text : "";
-    }
 
     function escapeHtml(value) {
       return String(value)
@@ -178,29 +185,37 @@
         .replace(/'/g, "&#39;");
     }
 
-    function getOptions(selectNode) {
-      return Array.from(selectNode.options).map((option) => ({
-        value: option.value,
-        label: option.text,
-      }));
+    function renderHiddenInputs(container, name, values) {
+      container.innerHTML = values.map((value) => `<input type="hidden" name="${name}" value="${value}">`).join("");
     }
 
-    function updatePickerButton(button, selectNode, fallbackLabel) {
-      button.textContent = selectedLabel(selectNode) || fallbackLabel;
+    function buildSummary(values, options, fallbackLabel) {
+      const selectedLabels = options
+        .filter((option) => values.includes(option.value))
+        .map((option) => option.label);
+      if (!selectedLabels.length) {
+        return fallbackLabel;
+      }
+      if (selectedLabels.length <= 2) {
+        return selectedLabels.join(", ");
+      }
+      return `${selectedLabels[0]}, ${selectedLabels[1]} +${selectedLabels.length - 2} more`;
     }
 
-    function applyPickerSelection(target) {
+    function applyPickerSelection(target, values) {
       if (target === "location") {
-        locationOptionsSource.value = locationInput.value;
-        updatePickerButton(openLocationButton, locationOptionsSource, "Choose Location");
+        selectedLocationIds = values;
+        renderHiddenInputs(locationInputs, "location_id", values);
+        openLocationButton.textContent = buildSummary(values, locationOptions, "Choose Location");
       } else {
-        providerOptionsSource.value = providerInput.value;
-        updatePickerButton(openProviderButton, providerOptionsSource, "Choose Provider");
+        selectedProviderIds = values;
+        renderHiddenInputs(providerInputs, "provider_id", values);
+        openProviderButton.textContent = buildSummary(values, providerOptions, "Choose Provider");
       }
       form.requestSubmit();
     }
 
-    function openPickerWindow(target, title, sourceSelect, hiddenInput) {
+    function openPickerWindow(target, title, options, selectedValues) {
       if (activePickerWindow && !activePickerWindow.closed) {
         activePickerWindow.close();
       }
@@ -209,12 +224,13 @@
         return;
       }
       activePickerWindow = popup;
-      const optionsMarkup = getOptions(sourceSelect)
+      const selectedValueSet = new Set(selectedValues);
+      const optionsMarkup = options
         .map((option) => {
-          const checked = option.value === hiddenInput.value ? " checked" : "";
+          const checked = selectedValueSet.has(option.value) ? " checked" : "";
           return `
             <label class="popup-option">
-              <input type="radio" name="pickerValue" value="${escapeHtml(option.value)}"${checked}>
+              <input type="checkbox" name="pickerValue" value="${escapeHtml(option.value)}"${checked}>
               <span>${escapeHtml(option.label)}</span>
             </label>
           `;
@@ -262,9 +278,9 @@
     document.getElementById("cancelButton").addEventListener("click", closePopup);
     document.getElementById("cancelFooterButton").addEventListener("click", closePopup);
     document.getElementById("applyButton").addEventListener("click", () => {
-      const selected = document.querySelector('input[name="pickerValue"]:checked');
-      if (window.opener && !window.opener.closed && selected) {
-        window.opener.applyDashboardPicker(${JSON.stringify(target)}, selected.value);
+      const selected = Array.from(document.querySelectorAll('input[name="pickerValue"]:checked')).map((input) => Number(input.value));
+      if (window.opener && !window.opener.closed) {
+        window.opener.applyDashboardPicker(${JSON.stringify(target)}, selected);
       }
       window.close();
     });
@@ -275,22 +291,15 @@
       popup.focus();
     }
 
-    window.applyDashboardPicker = (target, value) => {
-      if (target === "location") {
-        locationInput.value = value;
-      } else if (target === "provider") {
-        providerInput.value = value;
-      } else {
-        return;
-      }
-      applyPickerSelection(target);
+    window.applyDashboardPicker = (target, values) => {
+      applyPickerSelection(target, values);
     };
 
     openLocationButton.addEventListener("click", () => {
-      openPickerWindow("location", "Choose Location", locationOptionsSource, locationInput);
+      openPickerWindow("location", "Choose Location", locationOptions, selectedLocationIds);
     });
     openProviderButton.addEventListener("click", () => {
-      openPickerWindow("provider", "Choose Provider", providerOptionsSource, providerInput);
+      openPickerWindow("provider", "Choose Provider", providerOptions, selectedProviderIds);
     });
 
     visitDateInput.addEventListener("change", () => form.requestSubmit());
