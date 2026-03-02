@@ -50,6 +50,14 @@ def role_label(role: RoleEnum) -> str:
 templates.env.globals["role_label"] = role_label
 
 
+def summarize_selected_names(names: list[str], fallback_label: str) -> str:
+    if not names:
+        return fallback_label
+    if len(names) <= 2:
+        return ", ".join(names)
+    return f"{names[0]} + {len(names) - 1} more"
+
+
 @app.on_event("startup")
 def startup() -> None:
     Base.metadata.create_all(bind=engine)
@@ -405,12 +413,14 @@ def dashboard(
             "visits": prepared_visits,
             "flash": pop_flash(request),
             "format_dt": format_dt,
-            "selected_location_summary": ", ".join(
-                location.name for location in locations if location.id in set(selected_location_ids)
-            ) or "Choose Location",
-            "selected_provider_summary": ", ".join(
-                provider.name for provider in providers if provider.id in set(selected_provider_ids)
-            ) or "Choose Provider",
+            "selected_location_summary": summarize_selected_names(
+                [location.name for location in locations if location.id in set(selected_location_ids)],
+                "Choose Location",
+            ),
+            "selected_provider_summary": summarize_selected_names(
+                [provider.name for provider in providers if provider.id in set(selected_provider_ids)],
+                "Choose Provider",
+            ),
             "location_picker_options": [{"value": location.id, "label": location.name} for location in locations],
             "provider_picker_options": [{"value": provider.id, "label": provider.name} for provider in providers],
         },
