@@ -2,22 +2,32 @@
 {% block content %}
 <section class="panel">
   <form method="get" action="dashboard" class="selectors" id="dashboard-filters">
-    <label>Location
-      <select name="location_id" id="filter-location" required>
-        <option value="">Select</option>
-        {% for loc in locations %}
-          <option value="{{ loc.id }}" {% if selected_location_id == loc.id %}selected{% endif %}>{{ loc.name }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    <label>Provider
-      <select name="provider_id" id="filter-provider" required>
-        <option value="">Select</option>
-        {% for provider in providers %}
-          <option value="{{ provider.id }}" {% if selected_provider_id == provider.id %}selected{% endif %}>{{ provider.name }}</option>
-        {% endfor %}
-      </select>
-    </label>
+    <input type="hidden" name="location_id" id="filter-location" value="{{ selected_location_id or '' }}" />
+    <input type="hidden" name="provider_id" id="filter-provider" value="{{ selected_provider_id or '' }}" />
+    <select id="location-options-source" class="sr-only" tabindex="-1" aria-hidden="true">
+      <option value="">Select</option>
+      {% for loc in locations %}
+        <option value="{{ loc.id }}" {% if selected_location_id == loc.id %}selected{% endif %}>{{ loc.name }}</option>
+      {% endfor %}
+    </select>
+    <select id="provider-options-source" class="sr-only" tabindex="-1" aria-hidden="true">
+      <option value="">Select</option>
+      {% for provider in providers %}
+        <option value="{{ provider.id }}" {% if selected_provider_id == provider.id %}selected{% endif %}>{{ provider.name }}</option>
+      {% endfor %}
+    </select>
+    <div class="filter-group">
+      <span class="filter-label">Location</span>
+      <button type="button" class="picker-button" id="open-location-picker">
+        {{ locations | selectattr('id', 'equalto', selected_location_id) | map(attribute='name') | first or 'Choose Location' }}
+      </button>
+    </div>
+    <div class="filter-group">
+      <span class="filter-label">Provider</span>
+      <button type="button" class="picker-button" id="open-provider-picker">
+        {{ providers | selectattr('id', 'equalto', selected_provider_id) | map(attribute='name') | first or 'Choose Provider' }}
+      </button>
+    </div>
     <label>Date
       <input type="date" name="visit_date" id="filter-visit-date" value="{{ selected_date }}" />
     </label>
@@ -143,14 +153,146 @@
     const searchInput = document.getElementById("filter-search");
     const hideCompleteInput = document.getElementById("filter-hide-complete");
     const visitDateInput = document.getElementById("filter-visit-date");
+    const openLocationButton = document.getElementById("open-location-picker");
+    const openProviderButton = document.getElementById("open-provider-picker");
+    const locationOptionsSource = document.getElementById("location-options-source");
+    const providerOptionsSource = document.getElementById("provider-options-source");
+    let activePickerWindow = null;
 
     if (!form || !visitDateInput) {
       return;
     }
     let searchDebounce = null;
 
-    locationInput.addEventListener("change", () => form.requestSubmit());
-    providerInput.addEventListener("change", () => form.requestSubmit());
+    function selectedLabel(selectNode) {
+      const selectedOption = selectNode.options[selectNode.selectedIndex];
+      return selectedOption && selectedOption.value ? selectedOption.text : "";
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/\"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function getOptions(selectNode) {
+      return Array.from(selectNode.options).map((option) => ({
+        value: option.value,
+        label: option.text,
+      }));
+    }
+
+    function updatePickerButton(button, selectNode, fallbackLabel) {
+      button.textContent = selectedLabel(selectNode) || fallbackLabel;
+    }
+
+    function applyPickerSelection(target) {
+      if (target === "location") {
+        locationOptionsSource.value = locationInput.value;
+        updatePickerButton(openLocationButton, locationOptionsSource, "Choose Location");
+      } else {
+        providerOptionsSource.value = providerInput.value;
+        updatePickerButton(openProviderButton, providerOptionsSource, "Choose Provider");
+      }
+      form.requestSubmit();
+    }
+
+    function openPickerWindow(target, title, sourceSelect, hiddenInput) {
+      if (activePickerWindow && !activePickerWindow.closed) {
+        activePickerWindow.close();
+      }
+      const popup = window.open("", `${target}-picker-window`, "width=420,height=520,resizable=yes,scrollbars=yes");
+      if (!popup) {
+        return;
+      }
+      activePickerWindow = popup;
+      const optionsMarkup = getOptions(sourceSelect)
+        .map((option) => {
+          const checked = option.value === hiddenInput.value ? " checked" : "";
+          return `
+            <label class="popup-option">
+              <input type="radio" name="pickerValue" value="${escapeHtml(option.value)}"${checked}>
+              <span>${escapeHtml(option.label)}</span>
+            </label>
+          `;
+        })
+        .join("");
+      popup.document.open();
+      popup.document.write(`
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>${escapeHtml(title)}</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background: #f5f7fa; color: #222; }
+    .popup-shell { padding: 18px; }
+    .popup-card { background: #fff; border: 1px solid #d0d7de; border-radius: 8px; overflow: hidden; }
+    .popup-header { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; background: #1d3557; color: #fff; }
+    .popup-header h1 { font-size: 18px; margin: 0; }
+    .popup-body { padding: 14px 16px; max-height: 340px; overflow-y: auto; }
+    .popup-option { display: flex; gap: 10px; align-items: center; padding: 8px 0; font-size: 14px; }
+    .popup-footer { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 16px; border-top: 1px solid #d0d7de; }
+    button { padding: 8px 12px; font-size: 13px; border: none; border-radius: 4px; cursor: pointer; }
+    .secondary { background: #6c7a89; color: #fff; }
+    .primary { background: #1d3557; color: #fff; }
+  </style>
+</head>
+<body>
+  <div class="popup-shell">
+    <div class="popup-card">
+      <div class="popup-header">
+        <h1>${escapeHtml(title)}</h1>
+        <button type="button" class="secondary" id="cancelButton">Close</button>
+      </div>
+      <div class="popup-body">
+        ${optionsMarkup}
+      </div>
+      <div class="popup-footer">
+        <button type="button" class="secondary" id="cancelFooterButton">Cancel</button>
+        <button type="button" class="primary" id="applyButton">Apply</button>
+      </div>
+    </div>
+  </div>
+  <script>
+    const closePopup = () => window.close();
+    document.getElementById("cancelButton").addEventListener("click", closePopup);
+    document.getElementById("cancelFooterButton").addEventListener("click", closePopup);
+    document.getElementById("applyButton").addEventListener("click", () => {
+      const selected = document.querySelector('input[name="pickerValue"]:checked');
+      if (window.opener && !window.opener.closed && selected) {
+        window.opener.applyDashboardPicker(${JSON.stringify(target)}, selected.value);
+      }
+      window.close();
+    });
+  <\/script>
+</body>
+</html>`);
+      popup.document.close();
+      popup.focus();
+    }
+
+    window.applyDashboardPicker = (target, value) => {
+      if (target === "location") {
+        locationInput.value = value;
+      } else if (target === "provider") {
+        providerInput.value = value;
+      } else {
+        return;
+      }
+      applyPickerSelection(target);
+    };
+
+    openLocationButton.addEventListener("click", () => {
+      openPickerWindow("location", "Choose Location", locationOptionsSource, locationInput);
+    });
+    openProviderButton.addEventListener("click", () => {
+      openPickerWindow("provider", "Choose Provider", providerOptionsSource, providerInput);
+    });
+
     visitDateInput.addEventListener("change", () => form.requestSubmit());
     hideCompleteInput.addEventListener("change", () => form.requestSubmit());
     searchInput.addEventListener("input", () => {
