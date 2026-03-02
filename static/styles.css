@@ -27,3 +27,4 @@ th { background: #eef2f7; }
 .mini-form input { width: 120px; }
 .inline-check { flex-direction: row; align-items: center; gap: 6px; min-height: 31px; }
 .inline-check input { margin: 0; }
+.pre-arrival-date { min-width: 160px; }

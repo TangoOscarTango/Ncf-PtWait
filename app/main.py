@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from io import BytesIO
 from urllib.parse import urlencode
 
@@ -481,6 +481,7 @@ def create_visit(
     search: str | None = Form(default=None),
     hide_complete: bool = Form(default=False),
     pre_arrival: bool = Form(default=False),
+    pre_arrival_date: str | None = Form(default=None),
     location_filter_applied: bool = Form(default=False),
     provider_filter_applied: bool = Form(default=False),
     db: Session = Depends(get_db),
@@ -512,9 +513,10 @@ def create_visit(
         )
 
     created_at = datetime.now()
-    if pre_arrival and visit_date:
+    if pre_arrival:
+        scheduled_date_value = pre_arrival_date or (date.today() + timedelta(days=1)).strftime("%Y-%m-%d")
         try:
-            scheduled_date = datetime.strptime(visit_date, "%Y-%m-%d").date()
+            scheduled_date = datetime.strptime(scheduled_date_value, "%Y-%m-%d").date()
             created_at = datetime.combine(scheduled_date, created_at.time())
         except ValueError:
             pass
