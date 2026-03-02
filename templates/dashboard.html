@@ -4,29 +4,37 @@
   <form method="get" action="dashboard" class="selectors" id="dashboard-filters">
     <div class="filter-group">
       <span class="filter-label">Locations</span>
-      <div class="checkbox-dropdown" id="filter-location" data-empty-label="Select locations">
-        <button type="button" class="checkbox-dropdown-label">{{ location_filter_label }}</button>
-        <div class="multi-select-menu">
+      <div class="filter-popup" id="filter-location" data-empty-label="Choose Locations">
+        <button type="button" class="filter-popup-trigger">Choose Locations</button>
+        <div class="filter-popup-panel">
+          <div class="filter-popup-title">{{ location_filter_label }}</div>
           {% for loc in locations %}
             <label class="checkbox-option">
               <input type="checkbox" name="location_ids" value="{{ loc.id }}" {% if loc.id in selected_location_ids %}checked{% endif %} />
               <span>{{ loc.name }}</span>
             </label>
           {% endfor %}
+          <div class="filter-popup-actions">
+            <button type="button" class="filter-popup-close">Done</button>
+          </div>
         </div>
       </div>
     </div>
     <div class="filter-group">
       <span class="filter-label">Providers</span>
-      <div class="checkbox-dropdown" id="filter-provider" data-empty-label="Select providers">
-        <button type="button" class="checkbox-dropdown-label">{{ provider_filter_label }}</button>
-        <div class="multi-select-menu">
+      <div class="filter-popup" id="filter-provider" data-empty-label="Choose Providers">
+        <button type="button" class="filter-popup-trigger">Choose Providers</button>
+        <div class="filter-popup-panel">
+          <div class="filter-popup-title">{{ provider_filter_label }}</div>
           {% for provider in providers %}
             <label class="checkbox-option">
               <input type="checkbox" name="provider_ids" value="{{ provider.id }}" {% if provider.id in selected_provider_ids %}checked{% endif %} />
               <span>{{ provider.name }}</span>
             </label>
           {% endfor %}
+          <div class="filter-popup-actions">
+            <button type="button" class="filter-popup-close">Done</button>
+          </div>
         </div>
       </div>
     </div>
@@ -167,8 +175,8 @@
     const visitDateInput = document.getElementById("filter-visit-date");
     const locationDropdown = document.getElementById("filter-location");
     const providerDropdown = document.getElementById("filter-provider");
-    const locationSummary = locationDropdown ? locationDropdown.querySelector(".checkbox-dropdown-label") : null;
-    const providerSummary = providerDropdown ? providerDropdown.querySelector(".checkbox-dropdown-label") : null;
+    const locationSummary = locationDropdown ? locationDropdown.querySelector(".filter-popup-title") : null;
+    const providerSummary = providerDropdown ? providerDropdown.querySelector(".filter-popup-title") : null;
 
     if (!form || !visitDateInput) {
       return;
@@ -206,16 +214,20 @@
       if (!dropdown || !labelNode) {
         return;
       }
-      const trigger = labelNode;
+      const trigger = dropdown.querySelector(".filter-popup-trigger");
+      const closeButton = dropdown.querySelector(".filter-popup-close");
       trigger.addEventListener("click", () => {
         const willOpen = !dropdown.classList.contains("open");
-        document.querySelectorAll(".checkbox-dropdown.open").forEach((openDropdown) => {
+        document.querySelectorAll(".filter-popup.open").forEach((openDropdown) => {
           if (openDropdown !== dropdown) {
             closeDropdown(openDropdown);
           }
         });
         dropdown.classList.toggle("open", willOpen);
       });
+      if (closeButton) {
+        closeButton.addEventListener("click", () => closeDropdown(dropdown));
+      }
       inputs.forEach((input) => {
         input.addEventListener("change", () => {
           dropdown.dataset.dirty = "true";
@@ -243,16 +255,16 @@
     });
 
     document.addEventListener("click", (event) => {
-      if (!event.target.closest(".checkbox-dropdown")) {
+      if (!event.target.closest(".filter-popup")) {
         closeDropdown(locationDropdown);
         closeDropdown(providerDropdown);
       }
     });
 
-    initDropdown(locationDropdown, locationInputs, locationSummary, "Select locations");
-    initDropdown(providerDropdown, providerInputs, providerSummary, "Select providers");
-    updateSummary(locationInputs, locationSummary, "Select locations");
-    updateSummary(providerInputs, providerSummary, "Select providers");
+    initDropdown(locationDropdown, locationInputs, locationSummary, "Choose Locations");
+    initDropdown(providerDropdown, providerInputs, providerSummary, "Choose Providers");
+    updateSummary(locationInputs, locationSummary, "Choose Locations");
+    updateSummary(providerInputs, providerSummary, "Choose Providers");
   })();
 </script>
 {% endblock %}

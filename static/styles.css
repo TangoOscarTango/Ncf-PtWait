@@ -12,12 +12,14 @@ input, select, button { padding: 7px; font-size: 13px; }
 button { background: #1d3557; color: white; border: none; border-radius: 4px; cursor: pointer; }
 button:disabled { background: #9aa5b1; cursor: not-allowed; }
 .button-link { background: #6c7a89; color: white; border-radius: 4px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; min-height: 31px; padding: 0 12px; text-decoration: none; }
-.checkbox-dropdown { min-width: 220px; position: relative; }
-.checkbox-dropdown-label { align-items: center; background: white; border: 1px solid #d0d7de; border-radius: 4px; color: #222; display: flex; justify-content: space-between; min-height: 35px; padding: 7px 10px; width: 100%; }
-.checkbox-dropdown-label::after { color: #6b7280; content: "▾"; margin-left: 8px; }
-.checkbox-dropdown.open .checkbox-dropdown-label { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
-.multi-select-menu { background: white; border: 1px solid #d0d7de; border-top: none; display: none; left: 0; max-height: 180px; overflow-y: auto; padding: 6px; position: absolute; right: 0; top: 100%; z-index: 5; }
-.checkbox-dropdown.open .multi-select-menu { display: block; }
+.filter-popup { min-width: 220px; position: relative; }
+.filter-popup-trigger { align-items: center; background: white; border: 1px solid #d0d7de; color: #222; display: flex; justify-content: space-between; min-height: 35px; padding: 7px 10px; width: 100%; }
+.filter-popup-trigger::after { color: #6b7280; content: "▾"; margin-left: 8px; }
+.filter-popup-panel { background: white; border: 1px solid #d0d7de; border-radius: 8px; box-shadow: 0 10px 24px rgba(29, 53, 87, 0.16); display: none; left: 0; max-height: 260px; min-width: 260px; overflow-y: auto; padding: 10px; position: absolute; top: calc(100% + 6px); z-index: 20; }
+.filter-popup.open .filter-popup-panel { display: block; }
+.filter-popup-title { color: #4b5563; font-size: 12px; font-weight: 600; margin-bottom: 8px; }
+.filter-popup-actions { display: flex; justify-content: flex-end; margin-top: 8px; padding-top: 8px; border-top: 1px solid #e5e7eb; }
+.filter-popup-close { min-height: 31px; padding: 0 12px; }
 .checkbox-option { align-items: center; flex-direction: row; gap: 6px; padding: 4px 0; }
 .checkbox-option input { margin: 0; }
 .table-wrap { overflow-x: auto; }
