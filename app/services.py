@@ -6,6 +6,7 @@ from io import BytesIO
 from openpyxl import Workbook
 from openpyxl.utils import get_column_letter
 from openpyxl.styles import Font
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from app.models import AuditLog, RoleEnum, User, Visit
@@ -135,14 +136,45 @@ def set_timestamp(
     if field_name not in ROLE_ACTIONS[acting_user.role]:
         raise ValidationError("You are not allowed to perform this action.")
 
-    if not can_set_field(visit, field_name):
-        raise ValidationError("Step is not valid or has already been completed.")
+    now_value = now_local()
+    update_values = {
+        field_name: now_value,
+        DELAY_NOTE_FIELDS[field_name]: delay_note.strip() if delay_note and delay_note.strip() else None,
+        "updated_at": now_value,
+    }
+    conditions = [Visit.id == visit.id, getattr(Visit, field_name).is_(None)]
 
-    setattr(visit, field_name, now_local())
-    setattr(visit, DELAY_NOTE_FIELDS[field_name], delay_note.strip() if delay_note and delay_note.strip() else None)
-    visit.updated_at = now_local()
-    db.add(visit)
+    if field_name == "ready_for_clinical_at":
+        conditions.append(Visit.arrived_at.is_not(None))
+    elif field_name == "intake_complete_at":
+        conditions.append(Visit.ready_for_clinical_at.is_not(None))
+    elif field_name == "provider_in_at":
+        conditions.append(Visit.intake_complete_at.is_not(None))
+    elif field_name == "provider_out_at":
+        conditions.append(Visit.provider_in_at.is_not(None))
+    elif field_name == "lab_complete_at":
+        conditions.append(Visit.provider_in_at.is_not(None))
+    elif field_name == "checkout_at":
+        conditions.append(Visit.provider_out_at.is_not(None))
+
+    result = db.execute(update(Visit).where(*conditions).values(**update_values))
+    if result.rowcount != 1:
+        db.rollback()
+        current_visit = db.query(Visit).filter(Visit.id == visit.id).first()
+        if not current_visit:
+            raise ValidationError("Visit not found.")
+        db.refresh(current_visit)
+        for attribute in TIME_FIELDS:
+            setattr(visit, attribute, getattr(current_visit, attribute))
+        for attribute in DELAY_NOTE_FIELDS.values():
+            setattr(visit, attribute, getattr(current_visit, attribute))
+        visit.updated_at = current_visit.updated_at
+        if getattr(current_visit, field_name) is not None:
+            raise ValidationError("This step was already recorded by another user. The queue has been refreshed.")
+        raise ValidationError("This visit changed before your save completed. The queue has been refreshed.")
+
     db.commit()
+    db.refresh(visit)
 
 
 def override_timestamp(
