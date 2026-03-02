@@ -4,37 +4,65 @@
   <form method="get" action="dashboard" class="selectors" id="dashboard-filters">
     <div class="filter-group">
       <span class="filter-label">Locations</span>
-      <div class="filter-popup" id="filter-location" data-empty-label="Choose Locations">
-        <button type="button" class="filter-popup-trigger">Choose Locations</button>
-        <div class="filter-popup-panel">
-          <div class="filter-popup-title">{{ location_filter_label }}</div>
-          {% for loc in locations %}
-            <label class="checkbox-option">
-              <input type="checkbox" name="location_ids" value="{{ loc.id }}" {% if loc.id in selected_location_ids %}checked{% endif %} />
-              <span>{{ loc.name }}</span>
-            </label>
-          {% endfor %}
-          <div class="filter-popup-actions">
-            <button type="button" class="filter-popup-close">Done</button>
-          </div>
+      <div class="multi-select" id="filter-location" data-placeholder="Select locations">
+        <button
+          type="button"
+          class="multi-select__trigger"
+          aria-haspopup="listbox"
+          aria-expanded="false"
+          aria-controls="filter-location-menu"
+          role="combobox"
+        >
+          <span class="multi-select__summary{% if not selected_location_ids %} placeholder{% endif %}">{{ location_filter_label }}</span>
+        </button>
+        <div
+          class="multi-select__menu"
+          id="filter-location-menu"
+          role="listbox"
+          aria-multiselectable="true"
+        >
+          <ul class="multi-select__list">
+            {% for loc in locations %}
+              <li>
+                <label class="multi-select__option">
+                  <input class="multi-select__checkbox" type="checkbox" name="location_ids" value="{{ loc.id }}" {% if loc.id in selected_location_ids %}checked{% endif %} />
+                  <span class="multi-select__label">{{ loc.name }}</span>
+                </label>
+              </li>
+            {% endfor %}
+          </ul>
         </div>
       </div>
     </div>
     <div class="filter-group">
       <span class="filter-label">Providers</span>
-      <div class="filter-popup" id="filter-provider" data-empty-label="Choose Providers">
-        <button type="button" class="filter-popup-trigger">Choose Providers</button>
-        <div class="filter-popup-panel">
-          <div class="filter-popup-title">{{ provider_filter_label }}</div>
-          {% for provider in providers %}
-            <label class="checkbox-option">
-              <input type="checkbox" name="provider_ids" value="{{ provider.id }}" {% if provider.id in selected_provider_ids %}checked{% endif %} />
-              <span>{{ provider.name }}</span>
-            </label>
-          {% endfor %}
-          <div class="filter-popup-actions">
-            <button type="button" class="filter-popup-close">Done</button>
-          </div>
+      <div class="multi-select" id="filter-provider" data-placeholder="Select providers">
+        <button
+          type="button"
+          class="multi-select__trigger"
+          aria-haspopup="listbox"
+          aria-expanded="false"
+          aria-controls="filter-provider-menu"
+          role="combobox"
+        >
+          <span class="multi-select__summary{% if not selected_provider_ids %} placeholder{% endif %}">{{ provider_filter_label }}</span>
+        </button>
+        <div
+          class="multi-select__menu"
+          id="filter-provider-menu"
+          role="listbox"
+          aria-multiselectable="true"
+        >
+          <ul class="multi-select__list">
+            {% for provider in providers %}
+              <li>
+                <label class="multi-select__option">
+                  <input class="multi-select__checkbox" type="checkbox" name="provider_ids" value="{{ provider.id }}" {% if provider.id in selected_provider_ids %}checked{% endif %} />
+                  <span class="multi-select__label">{{ provider.name }}</span>
+                </label>
+              </li>
+            {% endfor %}
+          </ul>
         </div>
       </div>
     </div>
@@ -168,74 +196,119 @@
 <script>
   (() => {
     const form = document.getElementById("dashboard-filters");
-    const locationInputs = form ? Array.from(form.querySelectorAll('input[name="location_ids"]')) : [];
-    const providerInputs = form ? Array.from(form.querySelectorAll('input[name="provider_ids"]')) : [];
     const searchInput = document.getElementById("filter-search");
     const hideCompleteInput = document.getElementById("filter-hide-complete");
     const visitDateInput = document.getElementById("filter-visit-date");
-    const locationDropdown = document.getElementById("filter-location");
-    const providerDropdown = document.getElementById("filter-provider");
-    const locationSummary = locationDropdown ? locationDropdown.querySelector(".filter-popup-title") : null;
-    const providerSummary = providerDropdown ? providerDropdown.querySelector(".filter-popup-title") : null;
 
     if (!form || !visitDateInput) {
       return;
     }
     let searchDebounce = null;
 
-    function updateSummary(inputs, summaryNode, emptyLabel) {
-      if (!summaryNode) {
+    function selectedValues(inputs) {
+      return inputs.filter((input) => input.checked).map((input) => ({
+        label: input.closest("label")?.querySelector(".multi-select__label")?.textContent.trim() || "",
+        value: input.value,
+      }));
+    }
+
+    function updateSummary(widget) {
+      const summaryNode = widget.querySelector(".multi-select__summary");
+      const trigger = widget.querySelector(".multi-select__trigger");
+      const emptyLabel = widget.dataset.placeholder || "Select";
+      const values = selectedValues(Array.from(widget.querySelectorAll(".multi-select__checkbox")));
+      if (!summaryNode || !trigger) {
         return;
       }
-      const checkedLabels = inputs
-        .filter((input) => input.checked)
-        .map((input) => input.parentElement.textContent.trim());
-      if (checkedLabels.length === 0) {
+      if (values.length === 0) {
         summaryNode.textContent = emptyLabel;
-      } else if (checkedLabels.length <= 2) {
-        summaryNode.textContent = checkedLabels.join(", ");
+        summaryNode.classList.add("placeholder");
+        trigger.setAttribute("aria-label", emptyLabel);
+      } else if (values.length <= 2) {
+        summaryNode.textContent = values.map((item) => item.label).join(", ");
+        summaryNode.classList.remove("placeholder");
+        trigger.setAttribute("aria-label", `Selected: ${values.map((item) => item.label).join(", ")}`);
       } else {
-        summaryNode.textContent = `${checkedLabels.length} selected`;
+        summaryNode.textContent = `${values[0].label}, ${values[1].label} +${values.length - 2} more`;
+        summaryNode.classList.remove("placeholder");
+        trigger.setAttribute("aria-label", `${values.length} selected`);
       }
     }
 
-    function closeDropdown(dropdown) {
-      if (!dropdown || !dropdown.classList.contains("open")) {
+    function positionMenu(widget) {
+      const menu = widget.querySelector(".multi-select__menu");
+      if (!menu) {
         return;
       }
-      dropdown.classList.remove("open");
-      if (dropdown.dataset.dirty === "true") {
-        dropdown.dataset.dirty = "false";
+      const rect = widget.getBoundingClientRect();
+      const menuHeight = Math.min(menu.scrollHeight || 260, 260);
+      const spaceAbove = rect.top;
+      const spaceBelow = window.innerHeight - rect.bottom;
+      widget.dataset.direction = spaceAbove > menuHeight || spaceAbove > spaceBelow ? "up" : "down";
+    }
+
+    function closeWidget(widget) {
+      if (!widget || !widget.classList.contains("open")) {
+        return;
+      }
+      widget.classList.remove("open");
+      const trigger = widget.querySelector(".multi-select__trigger");
+      if (trigger) {
+        trigger.setAttribute("aria-expanded", "false");
+      }
+      if (widget.dataset.dirty === "true") {
+        widget.dataset.dirty = "false";
         form.requestSubmit();
       }
     }
 
-    function initDropdown(dropdown, inputs, labelNode, emptyLabel) {
-      if (!dropdown || !labelNode) {
+    function openWidget(widget) {
+      if (!widget) {
         return;
       }
-      const trigger = dropdown.querySelector(".filter-popup-trigger");
-      const closeButton = dropdown.querySelector(".filter-popup-close");
-      trigger.addEventListener("click", () => {
-        const willOpen = !dropdown.classList.contains("open");
-        document.querySelectorAll(".filter-popup.open").forEach((openDropdown) => {
-          if (openDropdown !== dropdown) {
-            closeDropdown(openDropdown);
-          }
-        });
-        dropdown.classList.toggle("open", willOpen);
+      document.querySelectorAll(".multi-select.open").forEach((openWidgetNode) => {
+        if (openWidgetNode !== widget) {
+          closeWidget(openWidgetNode);
+        }
       });
-      if (closeButton) {
-        closeButton.addEventListener("click", () => closeDropdown(dropdown));
+      positionMenu(widget);
+      widget.classList.add("open");
+      const trigger = widget.querySelector(".multi-select__trigger");
+      if (trigger) {
+        trigger.setAttribute("aria-expanded", "true");
       }
-      inputs.forEach((input) => {
-        input.addEventListener("change", () => {
-          dropdown.dataset.dirty = "true";
-          updateSummary(inputs, labelNode, emptyLabel);
-        });
-      });
     }
 
+    function toggleWidget(widget) {
+      if (widget.classList.contains("open")) {
+        closeWidget(widget);
+      } else {
+        openWidget(widget);
+      }
+    }
+
+    function initWidget(widget) {
+      if (!widget) {
+        return;
+      }
+      const trigger = widget.querySelector(".multi-select__trigger");
+      const inputs = Array.from(widget.querySelectorAll(".multi-select__checkbox"));
+      if (!trigger) {
+        return;
+      }
+      trigger.addEventListener("click", () => {
+        toggleWidget(widget);
+      });
+      inputs.forEach((input) => {
+        input.addEventListener("change", () => {
+          widget.dataset.dirty = "true";
+          updateSummary(widget);
+        });
+      });
+      updateSummary(widget);
+    }
+
+    const widgets = Array.from(form.querySelectorAll(".multi-select"));
     visitDateInput.addEventListener("change", () => form.requestSubmit());
     hideCompleteInput.addEventListener("change", () => form.requestSubmit());
     searchInput.addEventListener("input", () => {
@@ -255,16 +328,26 @@
     });
 
     document.addEventListener("click", (event) => {
-      if (!event.target.closest(".filter-popup")) {
-        closeDropdown(locationDropdown);
-        closeDropdown(providerDropdown);
+      if (!event.target.closest(".multi-select")) {
+        widgets.forEach((widget) => closeWidget(widget));
       }
     });
 
-    initDropdown(locationDropdown, locationInputs, locationSummary, "Choose Locations");
-    initDropdown(providerDropdown, providerInputs, providerSummary, "Choose Providers");
-    updateSummary(locationInputs, locationSummary, "Choose Locations");
-    updateSummary(providerInputs, providerSummary, "Choose Providers");
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        widgets.forEach((widget) => closeWidget(widget));
+      }
+    });
+
+    window.addEventListener("resize", () => {
+      widgets.forEach((widget) => {
+        if (widget.classList.contains("open")) {
+          positionMenu(widget);
+        }
+      });
+    });
+
+    widgets.forEach((widget) => initWidget(widget));
   })();
 </script>
 {% endblock %}
