@@ -179,6 +179,8 @@ def build_filter_query(
     visit_date: str,
     search: str | None,
     hide_complete: bool,
+    location_filter_applied: bool = True,
+    provider_filter_applied: bool = True,
 ) -> str:
     return urlencode(
         [
@@ -187,6 +189,8 @@ def build_filter_query(
             ("visit_date", visit_date),
             ("search", search or ""),
             ("hide_complete", str(hide_complete).lower()),
+            ("location_filter_applied", str(location_filter_applied).lower()),
+            ("provider_filter_applied", str(provider_filter_applied).lower()),
         ]
     )
 
@@ -197,8 +201,18 @@ def dashboard_redirect_url(
     visit_date: str,
     search: str | None,
     hide_complete: bool,
+    location_filter_applied: bool = True,
+    provider_filter_applied: bool = True,
 ) -> str:
-    return "/dashboard?" + build_filter_query(location_ids, provider_ids, visit_date, search, hide_complete)
+    return "/dashboard?" + build_filter_query(
+        location_ids,
+        provider_ids,
+        visit_date,
+        search,
+        hide_complete,
+        location_filter_applied,
+        provider_filter_applied,
+    )
 
 
 def parameters_page_context(request: Request, user: User, db: Session) -> dict:
@@ -273,6 +287,8 @@ def dashboard(
     visit_date: str | None = None,
     search: str | None = None,
     hide_complete: bool = False,
+    location_filter_applied: bool = False,
+    provider_filter_applied: bool = False,
     db: Session = Depends(get_db),
 ):
     user = require_user(request, db)
@@ -287,20 +303,20 @@ def dashboard(
     selected_location_ids = normalize_selected_ids(location_id, valid_location_ids)
     selected_provider_ids = normalize_selected_ids(provider_id, valid_provider_ids)
 
-    if not selected_location_ids:
+    if not selected_location_ids and not location_filter_applied:
         selected_location_ids = persisted_selected_ids(
             user.preferred_location_ids,
             user.preferred_location_id,
             valid_location_ids,
         )
-    if not selected_provider_ids:
+    if not selected_provider_ids and not provider_filter_applied:
         selected_provider_ids = persisted_selected_ids(
             user.preferred_provider_ids,
             user.preferred_provider_id,
             valid_provider_ids,
         )
 
-    if selected_location_ids or selected_provider_ids:
+    if location_filter_applied or provider_filter_applied or selected_location_ids or selected_provider_ids:
         persist_user_context(user, selected_location_ids, selected_provider_ids, db)
 
     today = date.today()
@@ -438,6 +454,8 @@ def create_visit(
     visit_date: str | None = Form(default=None),
     search: str | None = Form(default=None),
     hide_complete: bool = Form(default=False),
+    location_filter_applied: bool = Form(default=False),
+    provider_filter_applied: bool = Form(default=False),
     db: Session = Depends(get_db),
 ):
     user = require_user(request, db)
@@ -447,8 +465,8 @@ def create_visit(
         set_flash(request, "error", "Only FD/Admin can create visits.")
         return RedirectResponse(url="/dashboard", status_code=303)
 
-    persisted_location_ids = filter_location_id or [location_id]
-    persisted_provider_ids = filter_provider_id or [provider_id]
+    persisted_location_ids = filter_location_id if location_filter_applied else [location_id]
+    persisted_provider_ids = filter_provider_id if provider_filter_applied else [provider_id]
     persist_user_context(user, persisted_location_ids, persisted_provider_ids, db)
 
     if not mrn.strip():
@@ -460,6 +478,8 @@ def create_visit(
                 visit_date or date.today().strftime("%Y-%m-%d"),
                 search,
                 hide_complete,
+                location_filter_applied,
+                provider_filter_applied,
             ),
             status_code=303,
         )
@@ -482,6 +502,8 @@ def create_visit(
             visit_date or date.today().strftime("%Y-%m-%d"),
             search,
             hide_complete,
+            location_filter_applied,
+            provider_filter_applied,
         ),
         status_code=303,
     )
@@ -574,6 +596,8 @@ def visit_action(
     delay_note: str | None = Form(default=None),
     search: str | None = Form(default=None),
     hide_complete: bool = Form(default=False),
+    location_filter_applied: bool = Form(default=False),
+    provider_filter_applied: bool = Form(default=False),
     db: Session = Depends(get_db),
 ):
     user = require_user(request, db)
@@ -593,7 +617,15 @@ def visit_action(
             set_flash(request, "error", str(exc))
 
     return RedirectResponse(
-        url=dashboard_redirect_url(filter_location_id, filter_provider_id, visit_date, search, hide_complete),
+        url=dashboard_redirect_url(
+            filter_location_id,
+            filter_provider_id,
+            visit_date,
+            search,
+            hide_complete,
+            location_filter_applied,
+            provider_filter_applied,
+        ),
         status_code=303,
     )
 

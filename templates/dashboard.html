@@ -2,6 +2,8 @@
 {% block content %}
 <section class="panel">
   <form method="get" action="dashboard" class="selectors" id="dashboard-filters">
+    <input type="hidden" name="location_filter_applied" value="true" />
+    <input type="hidden" name="provider_filter_applied" value="true" />
     <div id="filter-location-inputs">
       {% for location_id in selected_location_ids %}
         <input type="hidden" name="location_id" value="{{ location_id }}" />
@@ -45,6 +47,8 @@
   <h2>New Visit</h2>
   <form method="post" action="visits" class="inline-form">
     <label>MRN <input type="text" name="mrn" required /></label>
+    <input type="hidden" name="location_filter_applied" value="true" />
+    <input type="hidden" name="provider_filter_applied" value="true" />
     {% for location_id in selected_location_ids %}
       <input type="hidden" name="filter_location_id" value="{{ location_id }}" />
     {% endfor %}
@@ -112,6 +116,8 @@
             {% if row.next_field %}
               <form method="post" action="visits/{{ row.visit.id }}/action" class="mini-form">
                 <input type="hidden" name="action_field" value="{{ row.next_field }}" />
+                <input type="hidden" name="location_filter_applied" value="true" />
+                <input type="hidden" name="provider_filter_applied" value="true" />
                 {% for location_id in selected_location_ids %}
                   <input type="hidden" name="filter_location_id" value="{{ location_id }}" />
                 {% endfor %}
@@ -127,6 +133,8 @@
               {% if row.alt_action_field %}
               <form method="post" action="visits/{{ row.visit.id }}/action" class="mini-form">
                 <input type="hidden" name="action_field" value="{{ row.alt_action_field }}" />
+                <input type="hidden" name="location_filter_applied" value="true" />
+                <input type="hidden" name="provider_filter_applied" value="true" />
                 {% for location_id in selected_location_ids %}
                   <input type="hidden" name="filter_location_id" value="{{ location_id }}" />
                 {% endfor %}
