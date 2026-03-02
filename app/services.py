@@ -71,7 +71,7 @@ def can_set_field(visit: Visit, field_name: str) -> bool:
     if field_name == "provider_out_at":
         return visit.provider_in_at is not None
     if field_name == "lab_complete_at":
-        return visit.provider_in_at is not None
+        return visit.intake_complete_at is not None
     if field_name == "checkout_at":
         if visit.provider_out_at is None:
             return False
@@ -86,6 +86,8 @@ def get_next_field(visit: Visit) -> str | None:
         return "ready_for_clinical_at"
     if visit.intake_complete_at is None:
         return "intake_complete_at"
+    if visit.lab_complete_at is None and visit.provider_in_at is None:
+        return "lab_complete_at_or_provider_in"
     if visit.provider_in_at is None:
         return "provider_in_at"
     if visit.lab_complete_at is None and visit.provider_out_at is None:
@@ -101,6 +103,10 @@ def current_status(visit: Visit) -> str:
     next_field = get_next_field(visit)
     if next_field is None:
         return "Complete"
+    if next_field == "arrived_at":
+        return "Awaiting Arrival"
+    if next_field == "lab_complete_at_or_provider_in":
+        return "Intake Complete - Optional Lab or Provider In"
     if next_field == "lab_complete_at_or_provider_out":
         return "Provider In - Optional Lab or Provider Out"
     return f"Awaiting {FIELD_LABELS[next_field]}"
@@ -111,7 +117,11 @@ def lab_duration_minutes(visit: Visit) -> float | None:
         return None
     if visit.provider_out_at and visit.provider_out_at <= visit.lab_complete_at:
         return minutes_between(visit.provider_out_at, visit.lab_complete_at)
-    return minutes_between(visit.provider_in_at, visit.lab_complete_at)
+    if visit.provider_in_at and visit.provider_in_at <= visit.lab_complete_at:
+        return minutes_between(visit.provider_in_at, visit.lab_complete_at)
+    if visit.intake_complete_at:
+        return minutes_between(visit.intake_complete_at, visit.lab_complete_at)
+    return None
 
 
 def delay_note_entries(visit: Visit) -> list[tuple[str, str]]:
@@ -153,7 +163,7 @@ def set_timestamp(
     elif field_name == "provider_out_at":
         conditions.append(Visit.provider_in_at.is_not(None))
     elif field_name == "lab_complete_at":
-        conditions.append(Visit.provider_in_at.is_not(None))
+        conditions.append(Visit.intake_complete_at.is_not(None))
     elif field_name == "checkout_at":
         conditions.append(Visit.provider_out_at.is_not(None))
 

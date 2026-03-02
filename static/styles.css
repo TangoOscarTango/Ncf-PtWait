@@ -25,3 +25,5 @@ th { background: #eef2f7; }
 .login-card form { display: flex; flex-direction: column; gap: 10px; }
 .mini-form { margin-top: 6px; display: flex; gap: 6px; }
 .mini-form input { width: 120px; }
+.inline-check { flex-direction: row; align-items: center; gap: 6px; min-height: 31px; }
+.inline-check input { margin: 0; }

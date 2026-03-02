@@ -27,6 +27,7 @@ from app.services import (
     get_next_field,
     lab_duration_minutes,
     minutes_between,
+    now_local,
     override_timestamp,
     set_timestamp,
 )
@@ -364,7 +365,20 @@ def dashboard(
             continue
 
         next_field = get_next_field(visit)
-        if next_field == "lab_complete_at_or_provider_out":
+        if next_field == "lab_complete_at_or_provider_in":
+            if user.role in {RoleEnum.NURSE, RoleEnum.ADMIN}:
+                action_label = "Lab Complete (Optional)"
+                action_field = "lab_complete_at"
+                alt_action_label = "Provider In"
+                alt_action_field = "provider_in_at"
+                action_enabled = True
+            else:
+                action_label = "Lab Complete (Optional)"
+                action_field = "lab_complete_at"
+                alt_action_label = None
+                alt_action_field = None
+                action_enabled = False
+        elif next_field == "lab_complete_at_or_provider_out":
             if user.role in {RoleEnum.NURSE, RoleEnum.ADMIN}:
                 action_label = "Lab Complete (Optional)"
                 action_field = "lab_complete_at"
@@ -466,6 +480,7 @@ def create_visit(
     visit_date: str | None = Form(default=None),
     search: str | None = Form(default=None),
     hide_complete: bool = Form(default=False),
+    pre_arrival: bool = Form(default=False),
     location_filter_applied: bool = Form(default=False),
     provider_filter_applied: bool = Form(default=False),
     db: Session = Depends(get_db),
@@ -496,17 +511,30 @@ def create_visit(
             status_code=303,
         )
 
+    created_at = datetime.now()
+    if pre_arrival and visit_date:
+        try:
+            scheduled_date = datetime.strptime(visit_date, "%Y-%m-%d").date()
+            created_at = datetime.combine(scheduled_date, created_at.time())
+        except ValueError:
+            pass
+
     visit = Visit(
         mrn=mrn.strip(),
         location_id=location_id,
         provider_id=provider_id,
+        arrived_at=None if pre_arrival else now_local(),
         created_by_user_id=user.id,
-        created_at=datetime.now(),
-        updated_at=datetime.now(),
+        created_at=created_at,
+        updated_at=created_at,
     )
     db.add(visit)
     db.commit()
-    set_flash(request, "success", f"Visit for MRN {visit.mrn} created.")
+    set_flash(
+        request,
+        "success",
+        f"Visit for MRN {visit.mrn} created{' as pre-arrival' if pre_arrival else ' and marked arrived'}.",
+    )
     return RedirectResponse(
         url=dashboard_redirect_url(
             persisted_location_ids,
