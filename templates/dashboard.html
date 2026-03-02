@@ -2,86 +2,22 @@
 {% block content %}
 <section class="panel">
   <form method="get" action="dashboard" class="selectors" id="dashboard-filters">
-    <div class="filter-group">
-      <span class="filter-label">Locations</span>
-      <div class="selection-popup" id="filter-location" data-placeholder="Select locations">
-        <button
-          type="button"
-          class="selection-popup__trigger"
-          aria-haspopup="dialog"
-          aria-expanded="false"
-          aria-controls="filter-location-popup"
-          role="combobox"
-        >
-          <span class="selection-popup__summary{% if not selected_location_ids %} placeholder{% endif %}">{{ location_filter_label }}</span>
-        </button>
-        <div
-          class="selection-popup__modal"
-          id="filter-location-popup"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Choose locations"
-        >
-          <div class="selection-popup__panel">
-            <div class="selection-popup__header">
-              <h3>Choose Locations</h3>
-              <button type="button" class="selection-popup__close" aria-label="Close locations popup">x</button>
-            </div>
-            <div class="selection-popup__list" role="listbox" aria-multiselectable="true">
-              {% for loc in locations %}
-                <label class="selection-popup__option">
-                  <input class="selection-popup__checkbox" type="checkbox" name="location_ids" value="{{ loc.id }}" {% if loc.id in selected_location_ids %}checked{% endif %} />
-                  <span class="selection-popup__label">{{ loc.name }}</span>
-                </label>
-              {% endfor %}
-            </div>
-            <div class="selection-popup__footer">
-              <button type="button" class="selection-popup__done">Done</button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-    <div class="filter-group">
-      <span class="filter-label">Providers</span>
-      <div class="selection-popup" id="filter-provider" data-placeholder="Select providers">
-        <button
-          type="button"
-          class="selection-popup__trigger"
-          aria-haspopup="dialog"
-          aria-expanded="false"
-          aria-controls="filter-provider-popup"
-          role="combobox"
-        >
-          <span class="selection-popup__summary{% if not selected_provider_ids %} placeholder{% endif %}">{{ provider_filter_label }}</span>
-        </button>
-        <div
-          class="selection-popup__modal"
-          id="filter-provider-popup"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Choose providers"
-        >
-          <div class="selection-popup__panel">
-            <div class="selection-popup__header">
-              <h3>Choose Providers</h3>
-              <button type="button" class="selection-popup__close" aria-label="Close providers popup">x</button>
-            </div>
-            <div class="selection-popup__list" role="listbox" aria-multiselectable="true">
-              {% for provider in providers %}
-                <label class="selection-popup__option">
-                  <input class="selection-popup__checkbox" type="checkbox" name="provider_ids" value="{{ provider.id }}" {% if provider.id in selected_provider_ids %}checked{% endif %} />
-                  <span class="selection-popup__label">{{ provider.name }}</span>
-                </label>
-              {% endfor %}
-            </div>
-            <div class="selection-popup__footer">
-              <button type="button" class="selection-popup__done">Done</button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+    <label>Location
+      <select name="location_id" id="filter-location" required>
+        <option value="">Select</option>
+        {% for loc in locations %}
+          <option value="{{ loc.id }}" {% if selected_location_id == loc.id %}selected{% endif %}>{{ loc.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Provider
+      <select name="provider_id" id="filter-provider" required>
+        <option value="">Select</option>
+        {% for provider in providers %}
+          <option value="{{ provider.id }}" {% if selected_provider_id == provider.id %}selected{% endif %}>{{ provider.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
     <label>Date
       <input type="date" name="visit_date" id="filter-visit-date" value="{{ selected_date }}" />
     </label>
@@ -92,7 +28,11 @@
       <input type="checkbox" name="hide_complete" id="filter-hide-complete" value="true" {% if hide_complete %}checked{% endif %} />
       Hide complete
     </label>
-    <a href="dashboard?{{ clear_filter_query }}" class="button-link">Clear Filter</a>
+    {% if clear_filter_query %}
+      <a href="dashboard?{{ clear_filter_query }}" class="button-link">Clear Filter</a>
+    {% else %}
+      <a href="dashboard" class="button-link">Clear Filter</a>
+    {% endif %}
   </form>
 </section>
 
@@ -104,12 +44,6 @@
     <input type="hidden" name="visit_date" value="{{ selected_date }}" />
     <input type="hidden" name="search" value="{{ search }}" />
     <input type="hidden" name="hide_complete" value="{{ 'true' if hide_complete else 'false' }}" />
-    {% for location_id in selected_location_ids %}
-      <input type="hidden" name="location_ids" value="{{ location_id }}" />
-    {% endfor %}
-    {% for provider_id in selected_provider_ids %}
-      <input type="hidden" name="provider_ids" value="{{ provider_id }}" />
-    {% endfor %}
     <label>Location
       <select name="location_id" required>
         {% for loc in locations %}
@@ -131,8 +65,8 @@
 
 <section class="panel">
   <h2>Queue</h2>
-  {% if not selected_location_ids or not selected_provider_ids %}
-    <p>Select at least one Location and one Provider to view queue.</p>
+  {% if not selected_location_id or not selected_provider_id %}
+    <p>Select both Location and Provider to view queue.</p>
   {% else %}
   <div class="table-wrap">
     <table>
@@ -168,12 +102,8 @@
             {% if row.next_field %}
               <form method="post" action="visits/{{ row.visit.id }}/action" class="mini-form">
                 <input type="hidden" name="action_field" value="{{ row.next_field }}" />
-                {% for location_id in selected_location_ids %}
-                  <input type="hidden" name="location_ids" value="{{ location_id }}" />
-                {% endfor %}
-                {% for provider_id in selected_provider_ids %}
-                  <input type="hidden" name="provider_ids" value="{{ provider_id }}" />
-                {% endfor %}
+                <input type="hidden" name="location_id" value="{{ selected_location_id }}" />
+                <input type="hidden" name="provider_id" value="{{ selected_provider_id }}" />
                 <input type="hidden" name="visit_date" value="{{ selected_date }}" />
                 <input type="hidden" name="search" value="{{ search }}" />
                 <input type="hidden" name="hide_complete" value="{{ 'true' if hide_complete else 'false' }}" />
@@ -183,12 +113,8 @@
               {% if row.alt_action_field %}
               <form method="post" action="visits/{{ row.visit.id }}/action" class="mini-form">
                 <input type="hidden" name="action_field" value="{{ row.alt_action_field }}" />
-                {% for location_id in selected_location_ids %}
-                  <input type="hidden" name="location_ids" value="{{ location_id }}" />
-                {% endfor %}
-                {% for provider_id in selected_provider_ids %}
-                  <input type="hidden" name="provider_ids" value="{{ provider_id }}" />
-                {% endfor %}
+                <input type="hidden" name="location_id" value="{{ selected_location_id }}" />
+                <input type="hidden" name="provider_id" value="{{ selected_provider_id }}" />
                 <input type="hidden" name="visit_date" value="{{ selected_date }}" />
                 <input type="hidden" name="search" value="{{ search }}" />
                 <input type="hidden" name="hide_complete" value="{{ 'true' if hide_complete else 'false' }}" />
@@ -212,6 +138,8 @@
 <script>
   (() => {
     const form = document.getElementById("dashboard-filters");
+    const locationInput = document.getElementById("filter-location");
+    const providerInput = document.getElementById("filter-provider");
     const searchInput = document.getElementById("filter-search");
     const hideCompleteInput = document.getElementById("filter-hide-complete");
     const visitDateInput = document.getElementById("filter-visit-date");
@@ -221,113 +149,8 @@
     }
     let searchDebounce = null;
 
-    function selectedValues(inputs) {
-      return inputs.filter((input) => input.checked).map((input) => ({
-        label: input.closest("label")?.querySelector(".selection-popup__label")?.textContent.trim() || "",
-        value: input.value,
-      }));
-    }
-
-    function updateSummary(widget) {
-      const summaryNode = widget.querySelector(".selection-popup__summary");
-      const trigger = widget.querySelector(".selection-popup__trigger");
-      const emptyLabel = widget.dataset.placeholder || "Select";
-      const values = selectedValues(Array.from(widget.querySelectorAll(".selection-popup__checkbox")));
-      if (!summaryNode || !trigger) {
-        return;
-      }
-      if (values.length === 0) {
-        summaryNode.textContent = emptyLabel;
-        summaryNode.classList.add("placeholder");
-        trigger.setAttribute("aria-label", emptyLabel);
-      } else if (values.length <= 2) {
-        summaryNode.textContent = values.map((item) => item.label).join(", ");
-        summaryNode.classList.remove("placeholder");
-        trigger.setAttribute("aria-label", `Selected: ${values.map((item) => item.label).join(", ")}`);
-      } else {
-        summaryNode.textContent = `${values[0].label}, ${values[1].label} +${values.length - 2} more`;
-        summaryNode.classList.remove("placeholder");
-        trigger.setAttribute("aria-label", `${values.length} selected`);
-      }
-    }
-
-    function closeWidget(widget) {
-      if (!widget || !widget.classList.contains("open")) {
-        return;
-      }
-      widget.classList.remove("open");
-      const trigger = widget.querySelector(".selection-popup__trigger");
-      if (trigger) {
-        trigger.setAttribute("aria-expanded", "false");
-      }
-      if (widget.dataset.dirty === "true") {
-        widget.dataset.dirty = "false";
-        form.requestSubmit();
-      }
-    }
-
-    function openWidget(widget) {
-      if (!widget) {
-        return;
-      }
-      document.querySelectorAll(".selection-popup.open").forEach((openWidgetNode) => {
-        if (openWidgetNode !== widget) {
-          closeWidget(openWidgetNode);
-        }
-      });
-      widget.classList.add("open");
-      const trigger = widget.querySelector(".selection-popup__trigger");
-      if (trigger) {
-        trigger.setAttribute("aria-expanded", "true");
-      }
-    }
-
-    function toggleWidget(widget) {
-      if (widget.classList.contains("open")) {
-        closeWidget(widget);
-      } else {
-        openWidget(widget);
-      }
-    }
-
-    function initWidget(widget) {
-      if (!widget) {
-        return;
-      }
-      const trigger = widget.querySelector(".selection-popup__trigger");
-      const inputs = Array.from(widget.querySelectorAll(".selection-popup__checkbox"));
-      const doneButton = widget.querySelector(".selection-popup__done");
-      const closeButton = widget.querySelector(".selection-popup__close");
-      const modal = widget.querySelector(".selection-popup__modal");
-      if (!trigger) {
-        return;
-      }
-      trigger.addEventListener("click", () => {
-        toggleWidget(widget);
-      });
-      inputs.forEach((input) => {
-        input.addEventListener("change", () => {
-          widget.dataset.dirty = "true";
-          updateSummary(widget);
-        });
-      });
-      if (doneButton) {
-        doneButton.addEventListener("click", () => closeWidget(widget));
-      }
-      if (closeButton) {
-        closeButton.addEventListener("click", () => closeWidget(widget));
-      }
-      if (modal) {
-        modal.addEventListener("click", (event) => {
-          if (event.target === modal) {
-            closeWidget(widget);
-          }
-        });
-      }
-      updateSummary(widget);
-    }
-
-    const widgets = Array.from(form.querySelectorAll(".selection-popup"));
+    locationInput.addEventListener("change", () => form.requestSubmit());
+    providerInput.addEventListener("change", () => form.requestSubmit());
     visitDateInput.addEventListener("change", () => form.requestSubmit());
     hideCompleteInput.addEventListener("change", () => form.requestSubmit());
     searchInput.addEventListener("input", () => {
@@ -345,20 +168,6 @@
       window.clearTimeout(searchDebounce);
       form.requestSubmit();
     });
-
-    document.addEventListener("click", (event) => {
-      if (!event.target.closest(".selection-popup__panel") && !event.target.closest(".selection-popup__trigger")) {
-        widgets.forEach((widget) => closeWidget(widget));
-      }
-    });
-
-    document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") {
-        widgets.forEach((widget) => closeWidget(widget));
-      }
-    });
-
-    widgets.forEach((widget) => initWidget(widget));
   })();
 </script>
 {% endblock %}
