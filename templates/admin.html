@@ -15,7 +15,7 @@
     <label>Visit
       <select name="visit_id" id="override-visit-id" required>
         {% for visit in visits %}
-          <option value="{{ visit.id }}" {% if selected_visit_id == visit.id %}selected{% endif %}>#{{ visit.id }} - {{ visit.mrn }} ({{ format_dt(visit.created_at) }})</option>
+          <option value="{{ visit.id }}" {% if selected_visit_id == visit.id %}selected{% endif %}>#{{ visit.id }} - {{ visit.mrn }} ({{ format_dt_minutes(visit.created_at) }}) {{ current_status(visit) }}</option>
         {% endfor %}
       </select>
     </label>

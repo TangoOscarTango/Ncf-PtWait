@@ -64,6 +64,12 @@ def format_dt_local_input(value: datetime | None) -> str:
     return value.strftime("%Y-%m-%dT%H:%M")
 
 
+def format_dt_minutes(value: datetime | None) -> str:
+    if value is None:
+        return ""
+    return value.strftime("%Y-%m-%d %H:%M")
+
+
 @app.on_event("startup")
 def startup() -> None:
     Base.metadata.create_all(bind=engine)
@@ -689,7 +695,9 @@ def admin_page(
             "mrn": mrn or "",
             "search_date": search_date or "",
             "format_dt": format_dt,
+            "format_dt_minutes": format_dt_minutes,
             "format_dt_local_input": format_dt_local_input,
+            "current_status": current_status,
             "visit_timestamp_map": {
                 visit.id: {field: format_dt_local_input(getattr(visit, field)) for field in TIME_FIELDS}
                 for visit in visits
