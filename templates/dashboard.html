@@ -4,65 +4,81 @@
   <form method="get" action="dashboard" class="selectors" id="dashboard-filters">
     <div class="filter-group">
       <span class="filter-label">Locations</span>
-      <div class="multi-select" id="filter-location" data-placeholder="Select locations">
+      <div class="selection-popup" id="filter-location" data-placeholder="Select locations">
         <button
           type="button"
-          class="multi-select__trigger"
-          aria-haspopup="listbox"
+          class="selection-popup__trigger"
+          aria-haspopup="dialog"
           aria-expanded="false"
-          aria-controls="filter-location-menu"
+          aria-controls="filter-location-popup"
           role="combobox"
         >
-          <span class="multi-select__summary{% if not selected_location_ids %} placeholder{% endif %}">{{ location_filter_label }}</span>
+          <span class="selection-popup__summary{% if not selected_location_ids %} placeholder{% endif %}">{{ location_filter_label }}</span>
         </button>
         <div
-          class="multi-select__menu"
-          id="filter-location-menu"
-          role="listbox"
-          aria-multiselectable="true"
+          class="selection-popup__modal"
+          id="filter-location-popup"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Choose locations"
         >
-          <ul class="multi-select__list">
-            {% for loc in locations %}
-              <li>
-                <label class="multi-select__option">
-                  <input class="multi-select__checkbox" type="checkbox" name="location_ids" value="{{ loc.id }}" {% if loc.id in selected_location_ids %}checked{% endif %} />
-                  <span class="multi-select__label">{{ loc.name }}</span>
+          <div class="selection-popup__panel">
+            <div class="selection-popup__header">
+              <h3>Choose Locations</h3>
+              <button type="button" class="selection-popup__close" aria-label="Close locations popup">x</button>
+            </div>
+            <div class="selection-popup__list" role="listbox" aria-multiselectable="true">
+              {% for loc in locations %}
+                <label class="selection-popup__option">
+                  <input class="selection-popup__checkbox" type="checkbox" name="location_ids" value="{{ loc.id }}" {% if loc.id in selected_location_ids %}checked{% endif %} />
+                  <span class="selection-popup__label">{{ loc.name }}</span>
                 </label>
-              </li>
-            {% endfor %}
-          </ul>
+              {% endfor %}
+            </div>
+            <div class="selection-popup__footer">
+              <button type="button" class="selection-popup__done">Done</button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
     <div class="filter-group">
       <span class="filter-label">Providers</span>
-      <div class="multi-select" id="filter-provider" data-placeholder="Select providers">
+      <div class="selection-popup" id="filter-provider" data-placeholder="Select providers">
         <button
           type="button"
-          class="multi-select__trigger"
-          aria-haspopup="listbox"
+          class="selection-popup__trigger"
+          aria-haspopup="dialog"
           aria-expanded="false"
-          aria-controls="filter-provider-menu"
+          aria-controls="filter-provider-popup"
           role="combobox"
         >
-          <span class="multi-select__summary{% if not selected_provider_ids %} placeholder{% endif %}">{{ provider_filter_label }}</span>
+          <span class="selection-popup__summary{% if not selected_provider_ids %} placeholder{% endif %}">{{ provider_filter_label }}</span>
         </button>
         <div
-          class="multi-select__menu"
-          id="filter-provider-menu"
-          role="listbox"
-          aria-multiselectable="true"
+          class="selection-popup__modal"
+          id="filter-provider-popup"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Choose providers"
         >
-          <ul class="multi-select__list">
-            {% for provider in providers %}
-              <li>
-                <label class="multi-select__option">
-                  <input class="multi-select__checkbox" type="checkbox" name="provider_ids" value="{{ provider.id }}" {% if provider.id in selected_provider_ids %}checked{% endif %} />
-                  <span class="multi-select__label">{{ provider.name }}</span>
+          <div class="selection-popup__panel">
+            <div class="selection-popup__header">
+              <h3>Choose Providers</h3>
+              <button type="button" class="selection-popup__close" aria-label="Close providers popup">x</button>
+            </div>
+            <div class="selection-popup__list" role="listbox" aria-multiselectable="true">
+              {% for provider in providers %}
+                <label class="selection-popup__option">
+                  <input class="selection-popup__checkbox" type="checkbox" name="provider_ids" value="{{ provider.id }}" {% if provider.id in selected_provider_ids %}checked{% endif %} />
+                  <span class="selection-popup__label">{{ provider.name }}</span>
                 </label>
-              </li>
-            {% endfor %}
-          </ul>
+              {% endfor %}
+            </div>
+            <div class="selection-popup__footer">
+              <button type="button" class="selection-popup__done">Done</button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -207,16 +223,16 @@
 
     function selectedValues(inputs) {
       return inputs.filter((input) => input.checked).map((input) => ({
-        label: input.closest("label")?.querySelector(".multi-select__label")?.textContent.trim() || "",
+        label: input.closest("label")?.querySelector(".selection-popup__label")?.textContent.trim() || "",
         value: input.value,
       }));
     }
 
     function updateSummary(widget) {
-      const summaryNode = widget.querySelector(".multi-select__summary");
-      const trigger = widget.querySelector(".multi-select__trigger");
+      const summaryNode = widget.querySelector(".selection-popup__summary");
+      const trigger = widget.querySelector(".selection-popup__trigger");
       const emptyLabel = widget.dataset.placeholder || "Select";
-      const values = selectedValues(Array.from(widget.querySelectorAll(".multi-select__checkbox")));
+      const values = selectedValues(Array.from(widget.querySelectorAll(".selection-popup__checkbox")));
       if (!summaryNode || !trigger) {
         return;
       }
@@ -235,24 +251,12 @@
       }
     }
 
-    function positionMenu(widget) {
-      const menu = widget.querySelector(".multi-select__menu");
-      if (!menu) {
-        return;
-      }
-      const rect = widget.getBoundingClientRect();
-      const menuHeight = Math.min(menu.scrollHeight || 260, 260);
-      const spaceAbove = rect.top;
-      const spaceBelow = window.innerHeight - rect.bottom;
-      widget.dataset.direction = spaceAbove > menuHeight || spaceAbove > spaceBelow ? "up" : "down";
-    }
-
     function closeWidget(widget) {
       if (!widget || !widget.classList.contains("open")) {
         return;
       }
       widget.classList.remove("open");
-      const trigger = widget.querySelector(".multi-select__trigger");
+      const trigger = widget.querySelector(".selection-popup__trigger");
       if (trigger) {
         trigger.setAttribute("aria-expanded", "false");
       }
@@ -266,14 +270,13 @@
       if (!widget) {
         return;
       }
-      document.querySelectorAll(".multi-select.open").forEach((openWidgetNode) => {
+      document.querySelectorAll(".selection-popup.open").forEach((openWidgetNode) => {
         if (openWidgetNode !== widget) {
           closeWidget(openWidgetNode);
         }
       });
-      positionMenu(widget);
       widget.classList.add("open");
-      const trigger = widget.querySelector(".multi-select__trigger");
+      const trigger = widget.querySelector(".selection-popup__trigger");
       if (trigger) {
         trigger.setAttribute("aria-expanded", "true");
       }
@@ -291,8 +294,11 @@
       if (!widget) {
         return;
       }
-      const trigger = widget.querySelector(".multi-select__trigger");
-      const inputs = Array.from(widget.querySelectorAll(".multi-select__checkbox"));
+      const trigger = widget.querySelector(".selection-popup__trigger");
+      const inputs = Array.from(widget.querySelectorAll(".selection-popup__checkbox"));
+      const doneButton = widget.querySelector(".selection-popup__done");
+      const closeButton = widget.querySelector(".selection-popup__close");
+      const modal = widget.querySelector(".selection-popup__modal");
       if (!trigger) {
         return;
       }
@@ -305,10 +311,23 @@
           updateSummary(widget);
         });
       });
+      if (doneButton) {
+        doneButton.addEventListener("click", () => closeWidget(widget));
+      }
+      if (closeButton) {
+        closeButton.addEventListener("click", () => closeWidget(widget));
+      }
+      if (modal) {
+        modal.addEventListener("click", (event) => {
+          if (event.target === modal) {
+            closeWidget(widget);
+          }
+        });
+      }
       updateSummary(widget);
     }
 
-    const widgets = Array.from(form.querySelectorAll(".multi-select"));
+    const widgets = Array.from(form.querySelectorAll(".selection-popup"));
     visitDateInput.addEventListener("change", () => form.requestSubmit());
     hideCompleteInput.addEventListener("change", () => form.requestSubmit());
     searchInput.addEventListener("input", () => {
@@ -328,7 +347,7 @@
     });
 
     document.addEventListener("click", (event) => {
-      if (!event.target.closest(".multi-select")) {
+      if (!event.target.closest(".selection-popup__panel") && !event.target.closest(".selection-popup__trigger")) {
         widgets.forEach((widget) => closeWidget(widget));
       }
     });
@@ -337,14 +356,6 @@
       if (event.key === "Escape") {
         widgets.forEach((widget) => closeWidget(widget));
       }
-    });
-
-    window.addEventListener("resize", () => {
-      widgets.forEach((widget) => {
-        if (widget.classList.contains("open")) {
-          positionMenu(widget);
-        }
-      });
     });
 
     widgets.forEach((widget) => initWidget(widget));

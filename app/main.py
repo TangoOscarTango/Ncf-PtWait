@@ -86,6 +86,10 @@ def ensure_user_preference_columns(db: Session) -> None:
         db.execute(text("ALTER TABLE users ADD COLUMN preferred_location_id INTEGER"))
     if "preferred_provider_id" not in columns:
         db.execute(text("ALTER TABLE users ADD COLUMN preferred_provider_id INTEGER"))
+    if "preferred_location_ids" not in columns:
+        db.execute(text("ALTER TABLE users ADD COLUMN preferred_location_ids TEXT"))
+    if "preferred_provider_ids" not in columns:
+        db.execute(text("ALTER TABLE users ADD COLUMN preferred_provider_ids TEXT"))
     db.commit()
 
 
@@ -100,13 +104,45 @@ def ensure_visit_delay_note_columns(db: Session) -> None:
     db.commit()
 
 
-def persist_user_context(user: User, location_id: int | None, provider_id: int | None, db: Session) -> None:
+def serialize_id_list(values: list[int]) -> str | None:
+    if not values:
+        return None
+    return ",".join(str(value) for value in values)
+
+
+def parse_id_list(raw_value: str | None) -> list[int]:
+    if not raw_value:
+        return []
+    parsed: list[int] = []
+    for part in raw_value.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            parsed.append(int(part))
+        except ValueError:
+            continue
+    return parsed
+
+
+def persist_user_context(user: User, location_ids: list[int], provider_ids: list[int], db: Session) -> None:
     changed = False
-    if location_id is not None and user.preferred_location_id != location_id:
-        user.preferred_location_id = location_id
+    first_location_id = location_ids[0] if location_ids else None
+    first_provider_id = provider_ids[0] if provider_ids else None
+    serialized_location_ids = serialize_id_list(location_ids)
+    serialized_provider_ids = serialize_id_list(provider_ids)
+
+    if user.preferred_location_id != first_location_id:
+        user.preferred_location_id = first_location_id
         changed = True
-    if provider_id is not None and user.preferred_provider_id != provider_id:
-        user.preferred_provider_id = provider_id
+    if user.preferred_provider_id != first_provider_id:
+        user.preferred_provider_id = first_provider_id
+        changed = True
+    if user.preferred_location_ids != serialized_location_ids:
+        user.preferred_location_ids = serialized_location_ids
+        changed = True
+    if user.preferred_provider_ids != serialized_provider_ids:
+        user.preferred_provider_ids = serialized_provider_ids
         changed = True
     if changed:
         db.add(user)
@@ -245,18 +281,17 @@ def dashboard(
     selected_location_ids = normalize_selected_ids(location_ids, valid_location_ids)
     selected_provider_ids = normalize_selected_ids(provider_ids, valid_provider_ids)
 
+    if not selected_location_ids:
+        selected_location_ids = normalize_selected_ids(parse_id_list(user.preferred_location_ids), valid_location_ids)
+    if not selected_provider_ids:
+        selected_provider_ids = normalize_selected_ids(parse_id_list(user.preferred_provider_ids), valid_provider_ids)
     if not selected_location_ids and user.preferred_location_id in valid_location_ids:
         selected_location_ids = [user.preferred_location_id]
     if not selected_provider_ids and user.preferred_provider_id in valid_provider_ids:
         selected_provider_ids = [user.preferred_provider_id]
 
     if selected_location_ids or selected_provider_ids:
-        persist_user_context(
-            user,
-            selected_location_ids[0] if selected_location_ids else None,
-            selected_provider_ids[0] if selected_provider_ids else None,
-            db,
-        )
+        persist_user_context(user, selected_location_ids, selected_provider_ids, db)
 
     today = date.today()
     selected_date = today
@@ -396,7 +431,7 @@ def create_visit(
         set_flash(request, "error", "Only FD/Admin can create visits.")
         return RedirectResponse(url="/dashboard", status_code=303)
 
-    persist_user_context(user, location_id, provider_id, db)
+    persist_user_context(user, location_ids or [location_id], provider_ids or [provider_id], db)
 
     if not mrn.strip():
         set_flash(request, "error", "MRN is required.")
@@ -527,12 +562,7 @@ def visit_action(
     if isinstance(user, RedirectResponse):
         return user
 
-    persist_user_context(
-        user,
-        location_ids[0] if location_ids else None,
-        provider_ids[0] if provider_ids else None,
-        db,
-    )
+    persist_user_context(user, location_ids, provider_ids, db)
 
     visit = db.query(Visit).filter(Visit.id == visit_id).first()
     if not visit:

@@ -23,6 +23,8 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     preferred_location_id: Mapped[int | None] = mapped_column(ForeignKey("locations.id"), nullable=True)
     preferred_provider_id: Mapped[int | None] = mapped_column(ForeignKey("providers.id"), nullable=True)
+    preferred_location_ids: Mapped[str | None] = mapped_column(Text, nullable=True)
+    preferred_provider_ids: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     preferred_location: Mapped["Location | None"] = relationship("Location", foreign_keys=[preferred_location_id])
     preferred_provider: Mapped["Provider | None"] = relationship("Provider", foreign_keys=[preferred_provider_id])
