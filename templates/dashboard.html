@@ -12,18 +12,16 @@
         <input type="hidden" name="provider_id" value="{{ provider_id }}" />
       {% endfor %}
     </div>
-    <div class="filter-group">
-      <span class="filter-label">Location</span>
+    <label class="filter-group" for="open-location-picker">Location
       <button type="button" class="picker-button" id="open-location-picker">
         {{ selected_location_summary }}
       </button>
-    </div>
-    <div class="filter-group">
-      <span class="filter-label">Provider</span>
+    </label>
+    <label class="filter-group" for="open-provider-picker">Provider
       <button type="button" class="picker-button" id="open-provider-picker">
         {{ selected_provider_summary }}
       </button>
-    </div>
+    </label>
     <label>Date
       <input type="date" name="visit_date" id="filter-visit-date" value="{{ selected_date }}" />
     </label>
