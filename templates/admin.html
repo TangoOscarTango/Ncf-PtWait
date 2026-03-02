@@ -13,21 +13,21 @@
   <h2>Override Timestamp</h2>
   <form method="post" action="admin/override" class="inline-form">
     <label>Visit
-      <select name="visit_id" required>
+      <select name="visit_id" id="override-visit-id" required>
         {% for visit in visits %}
           <option value="{{ visit.id }}" {% if selected_visit_id == visit.id %}selected{% endif %}>#{{ visit.id }} - {{ visit.mrn }} ({{ format_dt(visit.created_at) }})</option>
         {% endfor %}
       </select>
     </label>
     <label>Field
-      <select name="field_name" required>
+      <select name="field_name" id="override-field-name" required>
         {% for field in time_fields %}
-          <option value="{{ field }}">{{ field_labels[field] }}</option>
+          <option value="{{ field }}" {% if selected_field_name == field %}selected{% endif %}>{{ field_labels[field] }}</option>
         {% endfor %}
       </select>
     </label>
     <label>New Date/Time (blank clears)
-      <input type="datetime-local" name="new_value" />
+      <input type="datetime-local" name="new_value" id="override-new-value" />
     </label>
     <label>Reason
       <input type="text" name="reason" required />
@@ -65,4 +65,29 @@
     </tbody>
   </table>
 </section>
+<script>
+  (() => {
+    const visitSelect = document.getElementById("override-visit-id");
+    const fieldSelect = document.getElementById("override-field-name");
+    const newValueInput = document.getElementById("override-new-value");
+    const visitTimestampMap = {{ visit_timestamp_map | tojson }};
+
+    if (!visitSelect || !fieldSelect || !newValueInput) {
+      return;
+    }
+
+    function syncOverrideValue() {
+      const visitId = visitSelect.value;
+      if (!visitId || !visitTimestampMap[visitId]) {
+        newValueInput.value = "";
+        return;
+      }
+      newValueInput.value = visitTimestampMap[visitId][fieldSelect.value] || "";
+    }
+
+    visitSelect.addEventListener("change", syncOverrideValue);
+    fieldSelect.addEventListener("change", syncOverrideValue);
+    syncOverrideValue();
+  })();
+</script>
 {% endblock %}

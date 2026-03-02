@@ -58,6 +58,12 @@ def summarize_selected_names(names: list[str], fallback_label: str) -> str:
     return f"{names[0]} + {len(names) - 1} more"
 
 
+def format_dt_local_input(value: datetime | None) -> str:
+    if value is None:
+        return ""
+    return value.strftime("%Y-%m-%dT%H:%M")
+
+
 @app.on_event("startup")
 def startup() -> None:
     Base.metadata.create_all(bind=engine)
@@ -635,6 +641,7 @@ def admin_page(
     request: Request,
     mrn: str | None = None,
     search_date: str | None = None,
+    field_name: str | None = None,
     db: Session = Depends(get_db),
 ):
     user = require_user(request, db)
@@ -656,6 +663,7 @@ def admin_page(
 
     visits = query.limit(100).all()
     selected_visit_id = request.query_params.get("visit_id")
+    selected_field_name = field_name if field_name in TIME_FIELDS else TIME_FIELDS[0]
     audit_rows = []
     if selected_visit_id:
         audit_rows = (
@@ -676,10 +684,16 @@ def admin_page(
             "field_labels": FIELD_LABELS,
             "audit_rows": audit_rows,
             "selected_visit_id": int(selected_visit_id) if selected_visit_id else None,
+            "selected_field_name": selected_field_name,
             "flash": pop_flash(request),
             "mrn": mrn or "",
             "search_date": search_date or "",
             "format_dt": format_dt,
+            "format_dt_local_input": format_dt_local_input,
+            "visit_timestamp_map": {
+                visit.id: {field: format_dt_local_input(getattr(visit, field)) for field in TIME_FIELDS}
+                for visit in visits
+            },
         },
     )
 
@@ -710,7 +724,7 @@ def admin_override(
             parsed_new_value = datetime.strptime(new_value, "%Y-%m-%dT%H:%M")
         except ValueError:
             set_flash(request, "error", "Invalid datetime format.")
-            return RedirectResponse(url=f"/admin?visit_id={visit_id}", status_code=303)
+            return RedirectResponse(url=f"/admin?visit_id={visit_id}&field_name={field_name}", status_code=303)
 
     try:
         override_timestamp(visit, field_name, parsed_new_value, reason, user, db)
@@ -718,7 +732,7 @@ def admin_override(
     except ValidationError as exc:
         set_flash(request, "error", str(exc))
 
-    return RedirectResponse(url=f"/admin?visit_id={visit_id}", status_code=303)
+    return RedirectResponse(url=f"/admin?visit_id={visit_id}&field_name={field_name}", status_code=303)
 
 
 @app.get("/export", response_class=HTMLResponse)
