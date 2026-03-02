@@ -21,6 +21,11 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[RoleEnum] = mapped_column(SqlEnum(RoleEnum), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    preferred_location_id: Mapped[int | None] = mapped_column(ForeignKey("locations.id"), nullable=True)
+    preferred_provider_id: Mapped[int | None] = mapped_column(ForeignKey("providers.id"), nullable=True)
+
+    preferred_location: Mapped["Location | None"] = relationship("Location", foreign_keys=[preferred_location_id])
+    preferred_provider: Mapped["Provider | None"] = relationship("Provider", foreign_keys=[preferred_provider_id])
 
 
 class Location(Base):
@@ -53,6 +58,14 @@ class Visit(Base):
     provider_out_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     lab_complete_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     checkout_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    arrived_delay_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ready_for_clinical_delay_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    intake_complete_delay_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    provider_in_delay_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    provider_out_delay_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    lab_complete_delay_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    checkout_delay_note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     delay_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)

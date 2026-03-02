@@ -2,7 +2,7 @@
 {% block content %}
 <section class="panel">
   <h2>Admin Search</h2>
-  <form method="get" action="/admin" class="inline-form">
+  <form method="get" action="admin" class="inline-form">
     <label>MRN <input type="text" name="mrn" value="{{ mrn }}" /></label>
     <label>Date <input type="date" name="search_date" value="{{ search_date }}" /></label>
     <button type="submit">Search</button>
@@ -11,7 +11,7 @@
 
 <section class="panel">
   <h2>Override Timestamp</h2>
-  <form method="post" action="/admin/override" class="inline-form">
+  <form method="post" action="admin/override" class="inline-form">
     <label>Visit
       <select name="visit_id" required>
         {% for visit in visits %}

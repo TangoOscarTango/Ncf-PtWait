@@ -3,19 +3,21 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <base href="/" />
   <title>{{ title or "Clinic Cycle Time" }}</title>
-  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="stylesheet" href="static/styles.css" />
 </head>
 <body>
   <header class="top-nav">
     <h1>Clinic Cycle Time</h1>
     {% if current_user %}
     <nav>
-      <a href="/dashboard">Dashboard</a>
-      <a href="/export">Export</a>
-      {% if current_user.role.value == 'admin' %}<a href="/admin">Admin</a>{% endif %}
-      <span>{{ current_user.username }} ({{ current_user.role.value }})</span>
-      <a href="/logout">Logout</a>
+      <a href="dashboard">Dashboard</a>
+      <a href="export">Export</a>
+      {% if current_user.role.value == 'admin' %}<a href="admin">Admin</a>{% endif %}
+      {% if current_user.role.value == 'admin' %}<a href="parameters">Edit Parameters</a>{% endif %}
+      <a href="account" class="nav-user" title="{{ role_label(current_user.role) }}">{{ current_user.username }}</a>
+      <a href="logout">Logout</a>
     </nav>
     {% endif %}
   </header>

@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h2>Account Settings</h2>
+  <p>Role: {{ role_label(current_user.role) }}</p>
+</section>
+
+<section class="panel">
+  <h2>Update Username</h2>
+  <form method="post" action="account/username" class="inline-form">
+    <label>Username
+      <input type="text" name="username" value="{{ current_user.username }}" required />
+    </label>
+    <button type="submit">Save Username</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Update Password</h2>
+  <form method="post" action="account/password" class="inline-form">
+    <label>Current Password
+      <input type="password" name="current_password" minlength="8" maxlength="32" required />
+    </label>
+    <label>New Password
+      <input type="password" name="new_password" minlength="8" maxlength="32" required />
+    </label>
+    <label>Confirm Password
+      <input type="password" name="confirm_password" minlength="8" maxlength="32" required />
+    </label>
+    <button type="submit">Save Password</button>
+  </form>
+</section>
+{% endblock %}

@@ -4,6 +4,8 @@ from datetime import date, datetime, time
 from io import BytesIO
 
 from openpyxl import Workbook
+from openpyxl.utils import get_column_letter
+from openpyxl.styles import Font
 from sqlalchemy.orm import Session
 
 from app.models import AuditLog, RoleEnum, User, Visit
@@ -26,6 +28,16 @@ FIELD_LABELS = {
     "provider_out_at": "Provider Out",
     "lab_complete_at": "Lab Complete",
     "checkout_at": "Checkout",
+}
+
+DELAY_NOTE_FIELDS = {
+    "arrived_at": "arrived_delay_note",
+    "ready_for_clinical_at": "ready_for_clinical_delay_note",
+    "intake_complete_at": "intake_complete_delay_note",
+    "provider_in_at": "provider_in_delay_note",
+    "provider_out_at": "provider_out_delay_note",
+    "lab_complete_at": "lab_complete_delay_note",
+    "checkout_at": "checkout_delay_note",
 }
 
 ROLE_ACTIONS = {
@@ -58,12 +70,10 @@ def can_set_field(visit: Visit, field_name: str) -> bool:
     if field_name == "provider_out_at":
         return visit.provider_in_at is not None
     if field_name == "lab_complete_at":
-        return visit.provider_out_at is not None
+        return visit.provider_in_at is not None
     if field_name == "checkout_at":
         if visit.provider_out_at is None:
             return False
-        if visit.lab_complete_at is not None:
-            return True
         return True
     return False
 
@@ -77,10 +87,10 @@ def get_next_field(visit: Visit) -> str | None:
         return "intake_complete_at"
     if visit.provider_in_at is None:
         return "provider_in_at"
+    if visit.lab_complete_at is None and visit.provider_out_at is None:
+        return "lab_complete_at_or_provider_out"
     if visit.provider_out_at is None:
         return "provider_out_at"
-    if visit.lab_complete_at is None and visit.checkout_at is None:
-        return "lab_complete_at_or_checkout"
     if visit.checkout_at is None:
         return "checkout_at"
     return None
@@ -90,12 +100,35 @@ def current_status(visit: Visit) -> str:
     next_field = get_next_field(visit)
     if next_field is None:
         return "Complete"
-    if next_field == "lab_complete_at_or_checkout":
-        return "Provider Out - Awaiting Lab or Checkout"
+    if next_field == "lab_complete_at_or_provider_out":
+        return "Provider In - Optional Lab or Provider Out"
     return f"Awaiting {FIELD_LABELS[next_field]}"
 
 
-def set_timestamp(visit: Visit, field_name: str, acting_user: User, db: Session) -> None:
+def lab_duration_minutes(visit: Visit) -> float | None:
+    if not visit.lab_complete_at:
+        return None
+    if visit.provider_out_at and visit.provider_out_at <= visit.lab_complete_at:
+        return minutes_between(visit.provider_out_at, visit.lab_complete_at)
+    return minutes_between(visit.provider_in_at, visit.lab_complete_at)
+
+
+def delay_note_entries(visit: Visit) -> list[tuple[str, str]]:
+    entries: list[tuple[str, str]] = []
+    for field_name in TIME_FIELDS:
+        note_value = getattr(visit, DELAY_NOTE_FIELDS[field_name])
+        if note_value:
+            entries.append((FIELD_LABELS[field_name], note_value))
+    return entries
+
+
+def set_timestamp(
+    visit: Visit,
+    field_name: str,
+    acting_user: User,
+    db: Session,
+    delay_note: str | None = None,
+) -> None:
     if field_name not in TIME_FIELDS:
         raise ValidationError("Invalid field.")
 
@@ -106,15 +139,7 @@ def set_timestamp(visit: Visit, field_name: str, acting_user: User, db: Session)
         raise ValidationError("Step is not valid or has already been completed.")
 
     setattr(visit, field_name, now_local())
-    visit.updated_at = now_local()
-    db.add(visit)
-    db.commit()
-
-
-def update_delay_note(visit: Visit, note: str | None, acting_user: User, db: Session) -> None:
-    if acting_user.role not in {RoleEnum.NURSE, RoleEnum.ADMIN}:
-        raise ValidationError("You do not have permission to edit delay notes.")
-    visit.delay_note = note.strip() if note else None
+    setattr(visit, DELAY_NOTE_FIELDS[field_name], delay_note.strip() if delay_note and delay_note.strip() else None)
     visit.updated_at = now_local()
     db.add(visit)
     db.commit()
@@ -176,21 +201,35 @@ def build_export(
         "MRN",
         "Location",
         "Provider",
-        "arrived_at",
-        "ready_for_clinical_at",
-        "intake_complete_at",
-        "provider_in_at",
-        "provider_out_at",
-        "lab_complete_at",
-        "checkout_at",
-        "registration_min",
-        "waiting_room_min",
-        "provider_wait_min",
-        "provider_duration_min",
-        "lab_duration_min",
-        "total_visit_min",
+        "Arrived At",
+        "Arrived Delay Reason",
+        "Ready for Clinical At",
+        "Ready for Clinical Delay Reason",
+        "Intake Complete At",
+        "Intake Complete Delay Reason",
+        "Provider In At",
+        "Provider In Delay Reason",
+        "Provider Out At",
+        "Provider Out Delay Reason",
+        "Lab Complete At",
+        "Lab Complete Delay Reason",
+        "Checkout At",
+        "Checkout Delay Reason",
+        "Registration Minutes",
+        "Waiting Room Minutes",
+        "Provider Wait Minutes",
+        "Provider Duration Minutes",
+        "Lab Duration Minutes",
+        "Total Visit Minutes",
     ]
     ws.append(headers)
+    ws.freeze_panes = "A2"
+
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+
+    for column_index in range(1, len(headers) + 1):
+        ws.column_dimensions[get_column_letter(column_index)].width = 18.0
 
     for visit in visits:
         ws.append(
@@ -199,17 +238,24 @@ def build_export(
                 visit.location.name,
                 visit.provider.name,
                 format_dt(visit.arrived_at),
+                visit.arrived_delay_note,
                 format_dt(visit.ready_for_clinical_at),
+                visit.ready_for_clinical_delay_note,
                 format_dt(visit.intake_complete_at),
+                visit.intake_complete_delay_note,
                 format_dt(visit.provider_in_at),
+                visit.provider_in_delay_note,
                 format_dt(visit.provider_out_at),
+                visit.provider_out_delay_note,
                 format_dt(visit.lab_complete_at),
+                visit.lab_complete_delay_note,
                 format_dt(visit.checkout_at),
+                visit.checkout_delay_note,
                 minutes_between(visit.arrived_at, visit.ready_for_clinical_at),
                 minutes_between(visit.ready_for_clinical_at, visit.intake_complete_at),
                 minutes_between(visit.intake_complete_at, visit.provider_in_at),
                 minutes_between(visit.provider_in_at, visit.provider_out_at),
-                minutes_between(visit.provider_out_at, visit.lab_complete_at),
+                lab_duration_minutes(visit),
                 minutes_between(visit.arrived_at, visit.checkout_at),
             ]
         )

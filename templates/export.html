@@ -2,7 +2,7 @@
 {% block content %}
 <section class="panel">
   <h2>Export to Excel</h2>
-  <form method="post" action="/export/download" class="inline-form">
+  <form method="post" action="export/download" class="inline-form">
     <label>Start Date <input type="date" name="start_date" value="{{ today }}" required /></label>
     <label>End Date <input type="date" name="end_date" value="{{ today }}" required /></label>
     <label>Location

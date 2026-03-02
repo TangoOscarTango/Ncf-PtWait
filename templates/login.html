@@ -3,14 +3,15 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <base href="/" />
   <title>Login - Clinic Cycle Time</title>
-  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="stylesheet" href="static/styles.css" />
 </head>
 <body>
   <main class="login-card">
     <h1>Clinic Cycle Time Login</h1>
     {% if error %}<div class="flash error">{{ error }}</div>{% endif %}
-    <form method="post" action="/login">
+    <form method="post" action="login">
       <label>Username <input type="text" name="username" required /></label>
       <label>Password <input type="password" name="password" required /></label>
       <button type="submit">Login</button>

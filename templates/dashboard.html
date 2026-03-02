@@ -1,35 +1,63 @@
 {% extends "base.html" %}
 {% block content %}
 <section class="panel">
-  <form method="get" action="/dashboard" class="selectors">
-    <label>Location
-      <select name="location_id" required>
-        <option value="">Select</option>
-        {% for loc in locations %}
-          <option value="{{ loc.id }}" {% if selected_location_id == loc.id %}selected{% endif %}>{{ loc.name }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    <label>Provider
-      <select name="provider_id" required>
-        <option value="">Select</option>
-        {% for provider in providers %}
-          <option value="{{ provider.id }}" {% if selected_provider_id == provider.id %}selected{% endif %}>{{ provider.name }}</option>
-        {% endfor %}
-      </select>
-    </label>
+  <form method="get" action="dashboard" class="selectors" id="dashboard-filters">
+    <div class="filter-group">
+      <span class="filter-label">Locations</span>
+      <details class="multi-select" id="filter-location">
+        <summary>{{ location_filter_label }}</summary>
+        <div class="multi-select-menu">
+          {% for loc in locations %}
+            <label class="checkbox-option">
+              <input type="checkbox" name="location_ids" value="{{ loc.id }}" {% if loc.id in selected_location_ids %}checked{% endif %} />
+              <span>{{ loc.name }}</span>
+            </label>
+          {% endfor %}
+        </div>
+      </details>
+    </div>
+    <div class="filter-group">
+      <span class="filter-label">Providers</span>
+      <details class="multi-select" id="filter-provider">
+        <summary>{{ provider_filter_label }}</summary>
+        <div class="multi-select-menu">
+          {% for provider in providers %}
+            <label class="checkbox-option">
+              <input type="checkbox" name="provider_ids" value="{{ provider.id }}" {% if provider.id in selected_provider_ids %}checked{% endif %} />
+              <span>{{ provider.name }}</span>
+            </label>
+          {% endfor %}
+        </div>
+      </details>
+    </div>
     <label>Date
-      <input type="date" name="visit_date" value="{{ selected_date }}" />
+      <input type="date" name="visit_date" id="filter-visit-date" value="{{ selected_date }}" />
     </label>
-    <button type="submit">Apply</button>
+    <label>Search
+      <input type="text" name="search" id="filter-search" value="{{ search }}" placeholder="MRN, note, or provider" />
+    </label>
+    <label>
+      <input type="checkbox" name="hide_complete" id="filter-hide-complete" value="true" {% if hide_complete %}checked{% endif %} />
+      Hide complete
+    </label>
+    <a href="dashboard?{{ clear_filter_query }}" class="button-link">Clear Filter</a>
   </form>
 </section>
 
 {% if current_user.role.value in ['fd', 'admin'] %}
 <section class="panel">
   <h2>New Visit</h2>
-  <form method="post" action="/visits" class="inline-form">
+  <form method="post" action="visits" class="inline-form">
     <label>MRN <input type="text" name="mrn" required /></label>
+    <input type="hidden" name="visit_date" value="{{ selected_date }}" />
+    <input type="hidden" name="search" value="{{ search }}" />
+    <input type="hidden" name="hide_complete" value="{{ 'true' if hide_complete else 'false' }}" />
+    {% for location_id in selected_location_ids %}
+      <input type="hidden" name="location_ids" value="{{ location_id }}" />
+    {% endfor %}
+    {% for provider_id in selected_provider_ids %}
+      <input type="hidden" name="provider_ids" value="{{ provider_id }}" />
+    {% endfor %}
     <label>Location
       <select name="location_id" required>
         {% for loc in locations %}
@@ -44,7 +72,6 @@
         {% endfor %}
       </select>
     </label>
-    <label>Delay Note <input type="text" name="delay_note" /></label>
     <button type="submit">Create Visit</button>
   </form>
 </section>
@@ -52,8 +79,8 @@
 
 <section class="panel">
   <h2>Queue</h2>
-  {% if not selected_location_id or not selected_provider_id %}
-    <p>Select both Location and Provider to view queue.</p>
+  {% if not selected_location_ids or not selected_provider_ids %}
+    <p>Select at least one Location and one Provider to view queue.</p>
   {% else %}
   <div class="table-wrap">
     <table>
@@ -69,7 +96,6 @@
           <th>Lab</th>
           <th>Checkout</th>
           <th>Total (min)</th>
-          <th>Delay Note</th>
           <th>Action</th>
         </tr>
       </thead>
@@ -78,41 +104,43 @@
         <tr>
           <td>{{ row.visit.mrn }}</td>
           <td>{{ row.status }}</td>
-          <td>{{ format_dt(row.visit.arrived_at) or '' }}</td>
-          <td>{{ format_dt(row.visit.ready_for_clinical_at) or '' }}</td>
-          <td>{{ format_dt(row.visit.intake_complete_at) or '' }}</td>
-          <td>{{ format_dt(row.visit.provider_in_at) or '' }}</td>
-          <td>{{ format_dt(row.visit.provider_out_at) or '' }}</td>
-          <td>{{ format_dt(row.visit.lab_complete_at) or '' }}</td>
-          <td>{{ format_dt(row.visit.checkout_at) or '' }}</td>
+          <td>{{ format_dt(row.visit.arrived_at) or '' }}{% if row.visit.arrived_delay_note %}<div class="timestamp-note">{{ row.visit.arrived_delay_note }}</div>{% endif %}</td>
+          <td>{{ format_dt(row.visit.ready_for_clinical_at) or '' }}{% if row.visit.ready_for_clinical_delay_note %}<div class="timestamp-note">{{ row.visit.ready_for_clinical_delay_note }}</div>{% endif %}</td>
+          <td>{{ format_dt(row.visit.intake_complete_at) or '' }}{% if row.visit.intake_complete_delay_note %}<div class="timestamp-note">{{ row.visit.intake_complete_delay_note }}</div>{% endif %}</td>
+          <td>{{ format_dt(row.visit.provider_in_at) or '' }}{% if row.visit.provider_in_delay_note %}<div class="timestamp-note">{{ row.visit.provider_in_delay_note }}</div>{% endif %}</td>
+          <td>{{ format_dt(row.visit.provider_out_at) or '' }}{% if row.visit.provider_out_delay_note %}<div class="timestamp-note">{{ row.visit.provider_out_delay_note }}</div>{% endif %}</td>
+          <td>{{ format_dt(row.visit.lab_complete_at) or '' }}{% if row.visit.lab_complete_delay_note %}<div class="timestamp-note">{{ row.visit.lab_complete_delay_note }}</div>{% endif %}</td>
+          <td>{{ format_dt(row.visit.checkout_at) or '' }}{% if row.visit.checkout_delay_note %}<div class="timestamp-note">{{ row.visit.checkout_delay_note }}</div>{% endif %}</td>
           <td>{{ row.total_visit_min or '' }}</td>
           <td>
-            {{ row.visit.delay_note or '' }}
-            {% if current_user.role.value in ['nurse', 'admin'] %}
-              <form method="post" action="/visits/{{ row.visit.id }}/delay-note" class="mini-form">
-                <input type="hidden" name="location_id" value="{{ selected_location_id }}" />
-                <input type="hidden" name="provider_id" value="{{ selected_provider_id }}" />
-                <input type="hidden" name="visit_date" value="{{ selected_date }}" />
-                <input type="text" name="delay_note" placeholder="Update note" />
-                <button type="submit">Save</button>
-              </form>
-            {% endif %}
-          </td>
-          <td>
             {% if row.next_field %}
-              <form method="post" action="/visits/{{ row.visit.id }}/action" class="mini-form">
+              <form method="post" action="visits/{{ row.visit.id }}/action" class="mini-form">
                 <input type="hidden" name="action_field" value="{{ row.next_field }}" />
-                <input type="hidden" name="location_id" value="{{ selected_location_id }}" />
-                <input type="hidden" name="provider_id" value="{{ selected_provider_id }}" />
+                {% for location_id in selected_location_ids %}
+                  <input type="hidden" name="location_ids" value="{{ location_id }}" />
+                {% endfor %}
+                {% for provider_id in selected_provider_ids %}
+                  <input type="hidden" name="provider_ids" value="{{ provider_id }}" />
+                {% endfor %}
                 <input type="hidden" name="visit_date" value="{{ selected_date }}" />
+                <input type="hidden" name="search" value="{{ search }}" />
+                <input type="hidden" name="hide_complete" value="{{ 'true' if hide_complete else 'false' }}" />
+                <input type="text" name="delay_note" placeholder="Delay reason" />
                 <button type="submit" {% if not row.next_enabled %}disabled{% endif %}>{{ row.next_label }}</button>
               </form>
               {% if row.alt_action_field %}
-              <form method="post" action="/visits/{{ row.visit.id }}/action" class="mini-form">
+              <form method="post" action="visits/{{ row.visit.id }}/action" class="mini-form">
                 <input type="hidden" name="action_field" value="{{ row.alt_action_field }}" />
-                <input type="hidden" name="location_id" value="{{ selected_location_id }}" />
-                <input type="hidden" name="provider_id" value="{{ selected_provider_id }}" />
+                {% for location_id in selected_location_ids %}
+                  <input type="hidden" name="location_ids" value="{{ location_id }}" />
+                {% endfor %}
+                {% for provider_id in selected_provider_ids %}
+                  <input type="hidden" name="provider_ids" value="{{ provider_id }}" />
+                {% endfor %}
                 <input type="hidden" name="visit_date" value="{{ selected_date }}" />
+                <input type="hidden" name="search" value="{{ search }}" />
+                <input type="hidden" name="hide_complete" value="{{ 'true' if hide_complete else 'false' }}" />
+                <input type="text" name="delay_note" placeholder="Delay reason" />
                 <button type="submit">{{ row.alt_action_label }}</button>
               </form>
               {% endif %}
@@ -122,11 +150,77 @@
           </td>
         </tr>
       {% else %}
-        <tr><td colspan="12">No visits found.</td></tr>
+        <tr><td colspan="11">No visits found.</td></tr>
       {% endfor %}
       </tbody>
     </table>
   </div>
   {% endif %}
 </section>
+<script>
+  (() => {
+    const form = document.getElementById("dashboard-filters");
+    const locationInputs = form ? Array.from(form.querySelectorAll('input[name="location_ids"]')) : [];
+    const providerInputs = form ? Array.from(form.querySelectorAll('input[name="provider_ids"]')) : [];
+    const searchInput = document.getElementById("filter-search");
+    const hideCompleteInput = document.getElementById("filter-hide-complete");
+    const visitDateInput = document.getElementById("filter-visit-date");
+    const locationSummary = document.querySelector("#filter-location summary");
+    const providerSummary = document.querySelector("#filter-provider summary");
+
+    if (!form || !visitDateInput) {
+      return;
+    }
+    let searchDebounce = null;
+
+    function updateSummary(inputs, summaryNode, emptyLabel) {
+      if (!summaryNode) {
+        return;
+      }
+      const checkedLabels = inputs
+        .filter((input) => input.checked)
+        .map((input) => input.parentElement.textContent.trim());
+      if (checkedLabels.length === 0) {
+        summaryNode.textContent = emptyLabel;
+      } else if (checkedLabels.length <= 2) {
+        summaryNode.textContent = checkedLabels.join(", ");
+      } else {
+        summaryNode.textContent = `${checkedLabels.length} selected`;
+      }
+    }
+
+    locationInputs.forEach((input) => {
+      input.addEventListener("change", () => {
+        updateSummary(locationInputs, locationSummary, "Select locations");
+        form.requestSubmit();
+      });
+    });
+    providerInputs.forEach((input) => {
+      input.addEventListener("change", () => {
+        updateSummary(providerInputs, providerSummary, "Select providers");
+        form.requestSubmit();
+      });
+    });
+    visitDateInput.addEventListener("change", () => form.requestSubmit());
+    hideCompleteInput.addEventListener("change", () => form.requestSubmit());
+    searchInput.addEventListener("input", () => {
+      window.clearTimeout(searchDebounce);
+      searchDebounce = window.setTimeout(() => form.requestSubmit(), 2000);
+    });
+    searchInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        window.clearTimeout(searchDebounce);
+        form.requestSubmit();
+      }
+    });
+    searchInput.addEventListener("blur", () => {
+      window.clearTimeout(searchDebounce);
+      form.requestSubmit();
+    });
+
+    updateSummary(locationInputs, locationSummary, "Select locations");
+    updateSummary(providerInputs, providerSummary, "Select providers");
+  })();
+</script>
 {% endblock %}

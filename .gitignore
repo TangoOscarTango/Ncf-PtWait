@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+app/__pycache__/
+*.pyc
+clinic_cycle_time.db
+clinic_cycle_time.db-shm
+clinic_cycle_time.db-wal

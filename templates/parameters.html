@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h2>Edit Parameters</h2>
+  <p>Admins can create users, reset passwords, and manage locations and providers here.</p>
+</section>
+
+<section class="panel">
+  <h2>Create User</h2>
+  <form method="post" action="parameters/users" class="inline-form">
+    <label>Username
+      <input type="text" name="username" required />
+    </label>
+    <label>Role
+      <select name="role" required>
+        <option value="fd">Front Desk</option>
+        <option value="nurse">Nurse</option>
+        <option value="admin">Admin</option>
+      </select>
+    </label>
+    <label>Temporary Password
+      <input type="password" name="password" minlength="8" maxlength="32" required />
+    </label>
+    <button type="submit">Create User</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Reset Passwords</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Username</th>
+        <th>Role</th>
+        <th>Reset Password</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for user in users %}
+      <tr>
+        <td>{{ user.username }}</td>
+        <td>{{ role_label(user.role) }}</td>
+        <td>
+          <form method="post" action="parameters/users/{{ user.id }}/reset-password" class="mini-form">
+            <input type="password" name="new_password" placeholder="New password" minlength="8" maxlength="32" required />
+            <button type="submit">Reset</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>Locations</h2>
+  <form method="post" action="parameters/locations" class="inline-form">
+    <label>New Location
+      <input type="text" name="name" required />
+    </label>
+    <button type="submit">Add Location</button>
+  </form>
+  <table>
+    <thead>
+      <tr>
+        <th>Location</th>
+        <th>Update</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for location in locations %}
+      <tr>
+        <td>{{ location.name }}</td>
+        <td>
+          <form method="post" action="parameters/locations/{{ location.id }}" class="mini-form">
+            <input type="text" name="name" value="{{ location.name }}" required />
+            <button type="submit">Save</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>Providers</h2>
+  <form method="post" action="parameters/providers" class="inline-form">
+    <label>New Provider
+      <input type="text" name="name" required />
+    </label>
+    <button type="submit">Add Provider</button>
+  </form>
+  <table>
+    <thead>
+      <tr>
+        <th>Provider</th>
+        <th>Update</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for provider in providers %}
+      <tr>
+        <td>{{ provider.name }}</td>
+        <td>
+          <form method="post" action="parameters/providers/{{ provider.id }}" class="mini-form">
+            <input type="text" name="name" value="{{ provider.name }}" required />
+            <button type="submit">Save</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}
