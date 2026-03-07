@@ -5,7 +5,20 @@ from app.models import Location, Provider, RoleEnum, User
 
 
 SEED_LOCATIONS = ["Main", "Brown", "Peds", "Women's Health", "Chester"]
-SEED_PROVIDERS = ["John Smith", "Jane Doe"]
+SEED_PROVIDERS = [
+    ("Gashaw Tafari", False),
+    ("Adnan Qadeer", False),
+    ("Kimberly Davis", False),
+    ("Douglas Tiedt", False),
+    ("Jacquelyn Gill", False),
+    ("Jovan Wright", False),
+    ("Alyse Suillivan", False),
+    ("Joyce Hart", False),
+    ("Roosevelt Daniel", False),
+    ("Veleka Mayfield", False),
+    ("Charita Johnson", False),
+    ("Brittney Congdon", True),
+]
 SEED_USERS = [
     ("admin", "ChangeMeAdmin!", RoleEnum.ADMIN),
     ("fd1", "ChangeMeFD!", RoleEnum.FD),
@@ -21,10 +34,16 @@ def seed_initial_data(db: Session) -> None:
             db.add(Location(name=name))
         changed = True
 
-    if db.query(Provider).count() == 0:
-        for name in SEED_PROVIDERS:
-            db.add(Provider(name=name))
-        changed = True
+    existing_providers = {provider.name: provider for provider in db.query(Provider).all()}
+    for name, is_hidden in SEED_PROVIDERS:
+        existing = existing_providers.get(name)
+        if existing is None:
+            db.add(Provider(name=name, is_hidden=is_hidden))
+            changed = True
+        elif existing.is_hidden != is_hidden:
+            existing.is_hidden = is_hidden
+            db.add(existing)
+            changed = True
 
     if db.query(User).count() == 0:
         for username, password, role in SEED_USERS:

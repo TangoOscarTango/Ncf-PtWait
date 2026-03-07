@@ -4,16 +4,20 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <base href="/" />
-  <title>{{ title or "Clinic Cycle Time" }}</title>
+  <title>{{ title or "Patient Cycle Time" }}</title>
   <link rel="stylesheet" href="static/styles.css" />
 </head>
 <body>
   <header class="top-nav">
-    <h1>Clinic Cycle Time</h1>
+    <div class="brand">
+      <img src="static/logo-medium.png" alt="Clinic logo" class="brand-logo" />
+      <h1>Patient Cycle Time</h1>
+    </div>
     {% if current_user %}
     <nav>
       <a href="dashboard">Dashboard</a>
       <a href="export">Export</a>
+      <a href="#" id="open-script-popup">Script</a>
       {% if current_user.role.value == 'admin' %}<a href="admin">Admin</a>{% endif %}
       {% if current_user.role.value == 'admin' %}<a href="parameters">Edit Parameters</a>{% endif %}
       <a href="account" class="nav-user" title="{{ role_label(current_user.role) }}">{{ current_user.username }}</a>
@@ -28,5 +32,50 @@
     {% endif %}
     {% block content %}{% endblock %}
   </main>
+  <div class="app-version">v1.939659 -BLM</div>
+  {% if current_user %}
+  <script>
+    (() => {
+      const scriptLink = document.getElementById("open-script-popup");
+      if (!scriptLink) {
+        return;
+      }
+      const username = {{ current_user.username | tojson }};
+      scriptLink.addEventListener("click", (event) => {
+        event.preventDefault();
+        const popup = window.open("", "script-popup-window", "width=620,height=420,resizable=yes,scrollbars=yes");
+        if (!popup) {
+          return;
+        }
+        popup.document.open();
+        popup.document.write(`
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Script</title>
+  <style>
+    body { margin: 0; font-family: Arial, sans-serif; background: #f5f7fa; color: #1f2937; }
+    .wrap { padding: 20px; }
+    .card { background: #fff; border: 1px solid #d0d7de; border-radius: 8px; padding: 18px; }
+    h1 { margin: 0 0 12px; font-size: 20px; }
+    p { margin: 0; line-height: 1.55; font-size: 16px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Script</h1>
+      <p>Hi my name is ${username}. I will be tracking your visit wait times today. We're working to improve your experience. I'm going to be standing in the background, simply observing.</p>
+    </div>
+  </div>
+</body>
+</html>`);
+        popup.document.close();
+        popup.focus();
+      });
+    })();
+  </script>
+  {% endif %}
 </body>
 </html>

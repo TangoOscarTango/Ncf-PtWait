@@ -14,18 +14,45 @@ Internal FastAPI + Jinja2 + SQLite app for patient cycle-time studies.
 - Delay note inline editing for nurse/admin.
 - Excel export with raw timestamps and calculated duration metrics.
 
-## Run locally
-```bash
+## Install CMD Shortcuts
+DNS Manager: dnsmgmt.msc  
+certlm.msc  
+certtmpl.msc  
+certsrv.msc  
+mmc
+
+## Host Server Shortcuts
+Port Forwarding: inetmgr
+
+
+
+## Run locally (Windows)
+1. Create and activate a virtual environment:
+
+```powershell
 python -m venv .venv
-# Windows
 .venv\Scripts\activate
-# macOS/Linux
-source .venv/bin/activate
+```
+
+2. Install dependencies:
+
+```powershell
 pip install -r requirements.txt
+pip install bcrypt==3.2.2 --force-reinstall
+```
+
+3. Start the app:
+
+```powershell
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 Open `http://localhost:8000`.
+
+## Official Scan-Server PC Run Command
+```powershell
+uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
 
 ## Production Deployment (Windows Server LAN)
 Deploy one server-hosted instance on the Windows server at `10.34.0.11`. All users access it from their browsers at:
@@ -111,3 +138,10 @@ On initial seed, app logs a warning to change passwords.
 ## Notes
 - All times are treated as America/New_York local time and stored as naive SQLite datetimes.
 - Database file defaults to `clinic_cycle_time.db` in project root.
+
+## macOS/Linux note
+If needed on macOS/Linux, activate the virtual environment with:
+
+```bash
+source .venv/bin/activate
+```

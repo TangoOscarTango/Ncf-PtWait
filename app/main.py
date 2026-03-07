@@ -15,6 +15,7 @@ from app.db import Base, SessionLocal, engine, get_db
 from app.models import AuditLog, Location, Provider, RoleEnum, User, Visit
 from app.seed import seed_initial_data
 from app.services import (
+    build_audit_export,
     DELAY_NOTE_FIELDS,
     FIELD_LABELS,
     TIME_FIELDS,
@@ -27,12 +28,16 @@ from app.services import (
     get_next_field,
     lab_duration_minutes,
     minutes_between,
+    other_begin_options,
+    other_can_begin,
+    other_duration_minutes,
+    other_pending_slots,
     now_local,
     override_timestamp,
     set_timestamp,
 )
 
-app = FastAPI(title="Clinic Cycle Time")
+app = FastAPI(title="Patient Cycle Time")
 app.add_middleware(SessionMiddleware, secret_key="replace-this-in-production", https_only=False)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
@@ -45,6 +50,7 @@ def role_label(role: RoleEnum) -> str:
         RoleEnum.ADMIN: "Admin",
         RoleEnum.FD: "Front Desk",
         RoleEnum.NURSE: "Nurse",
+        RoleEnum.AUDITOR: "Auditor",
     }[role]
 
 
@@ -77,7 +83,9 @@ def startup() -> None:
     db = SessionLocal()
     try:
         ensure_user_preference_columns(db)
-        ensure_visit_delay_note_columns(db)
+        ensure_location_columns(db)
+        ensure_provider_columns(db)
+        ensure_visit_columns(db)
         seed_initial_data(db)
     finally:
         db.close()
@@ -111,14 +119,54 @@ def ensure_user_preference_columns(db: Session) -> None:
         db.execute(text("ALTER TABLE users ADD COLUMN preferred_location_ids TEXT"))
     if "preferred_provider_ids" not in columns:
         db.execute(text("ALTER TABLE users ADD COLUMN preferred_provider_ids TEXT"))
+    if "is_hidden" not in columns:
+        db.execute(text("ALTER TABLE users ADD COLUMN is_hidden INTEGER NOT NULL DEFAULT 0"))
     db.commit()
 
 
-def ensure_visit_delay_note_columns(db: Session) -> None:
+def ensure_location_columns(db: Session) -> None:
+    columns = {
+        row[1]
+        for row in db.execute(text("PRAGMA table_info(locations)")).fetchall()
+    }
+    if "is_hidden" not in columns:
+        db.execute(text("ALTER TABLE locations ADD COLUMN is_hidden INTEGER NOT NULL DEFAULT 0"))
+    db.commit()
+
+
+def ensure_provider_columns(db: Session) -> None:
+    columns = {
+        row[1]
+        for row in db.execute(text("PRAGMA table_info(providers)")).fetchall()
+    }
+    if "is_hidden" not in columns:
+        db.execute(text("ALTER TABLE providers ADD COLUMN is_hidden INTEGER NOT NULL DEFAULT 0"))
+    db.commit()
+
+
+def ensure_visit_columns(db: Session) -> None:
     columns = {
         row[1]
         for row in db.execute(text("PRAGMA table_info(visits)")).fetchall()
     }
+    if "visit_type" not in columns:
+        db.execute(text("ALTER TABLE visits ADD COLUMN visit_type TEXT"))
+    if "other_begin_at" not in columns:
+        db.execute(text("ALTER TABLE visits ADD COLUMN other_begin_at DATETIME"))
+    if "other_end_at" not in columns:
+        db.execute(text("ALTER TABLE visits ADD COLUMN other_end_at DATETIME"))
+    if "intake_begin_at" not in columns:
+        db.execute(text("ALTER TABLE visits ADD COLUMN intake_begin_at DATETIME"))
+    if "declined_participation" not in columns:
+        db.execute(text("ALTER TABLE visits ADD COLUMN declined_participation INTEGER NOT NULL DEFAULT 0"))
+    if "no_show" not in columns:
+        db.execute(text("ALTER TABLE visits ADD COLUMN no_show INTEGER NOT NULL DEFAULT 0"))
+    if "other_begin_log" not in columns:
+        db.execute(text("ALTER TABLE visits ADD COLUMN other_begin_log TEXT"))
+    if "other_end_log" not in columns:
+        db.execute(text("ALTER TABLE visits ADD COLUMN other_end_log TEXT"))
+    if "other_timestamps_json" not in columns:
+        db.execute(text("ALTER TABLE visits ADD COLUMN other_timestamps_json TEXT"))
     for column_name in DELAY_NOTE_FIELDS.values():
         if column_name not in columns:
             db.execute(text(f"ALTER TABLE visits ADD COLUMN {column_name} TEXT"))
@@ -241,9 +289,11 @@ def parameters_page_context(request: Request, user: User, db: Session) -> dict:
 
 def visit_matches_dashboard_filters(visit: Visit, user: User, search_text_lower: str, hide_complete: bool) -> bool:
     if hide_complete:
+        if visit.no_show or visit.declined_participation:
+            return False
         if user.role == RoleEnum.FD and visit.ready_for_clinical_at is not None:
             return False
-        if user.role in {RoleEnum.NURSE, RoleEnum.ADMIN} and visit.checkout_at is not None:
+        if user.role in {RoleEnum.NURSE, RoleEnum.AUDITOR, RoleEnum.ADMIN} and visit.checkout_at is not None:
             return False
 
     if search_text_lower:
@@ -308,8 +358,8 @@ def dashboard(
     if isinstance(user, RedirectResponse):
         return user
 
-    locations = db.query(Location).order_by(Location.name).all()
-    providers = db.query(Provider).order_by(Provider.name).all()
+    locations = db.query(Location).filter(Location.is_hidden.is_(False)).order_by(Location.name).all()
+    providers = db.query(Provider).filter(Provider.is_hidden.is_(False)).order_by(Provider.name).all()
     valid_location_ids = {location.id for location in locations}
     valid_provider_ids = {provider.id for provider in providers}
 
@@ -365,33 +415,7 @@ def dashboard(
             continue
 
         next_field = get_next_field(visit)
-        if next_field == "lab_complete_at_or_provider_in":
-            if user.role in {RoleEnum.NURSE, RoleEnum.ADMIN}:
-                action_label = "Lab Complete (Optional)"
-                action_field = "lab_complete_at"
-                alt_action_label = "Provider In"
-                alt_action_field = "provider_in_at"
-                action_enabled = True
-            else:
-                action_label = "Lab Complete (Optional)"
-                action_field = "lab_complete_at"
-                alt_action_label = None
-                alt_action_field = None
-                action_enabled = False
-        elif next_field == "lab_complete_at_or_provider_out":
-            if user.role in {RoleEnum.NURSE, RoleEnum.ADMIN}:
-                action_label = "Lab Complete (Optional)"
-                action_field = "lab_complete_at"
-                alt_action_label = "Provider Out"
-                alt_action_field = "provider_out_at"
-                action_enabled = True
-            else:
-                action_label = "Lab Complete (Optional)"
-                action_field = "lab_complete_at"
-                alt_action_label = None
-                alt_action_field = None
-                action_enabled = False
-        elif next_field:
+        if next_field:
             action_field = next_field
             action_label = FIELD_LABELS[next_field]
             alt_action_label = None
@@ -400,8 +424,11 @@ def dashboard(
                 action_enabled = next_field in {"arrived_at", "ready_for_clinical_at"}
             elif user.role == RoleEnum.NURSE:
                 action_enabled = next_field in {
+                    "intake_begin_at",
                     "intake_complete_at",
                     "provider_in_at",
+                    "other_begin_at",
+                    "other_end_at",
                     "provider_out_at",
                     "lab_complete_at",
                     "checkout_at",
@@ -428,8 +455,12 @@ def dashboard(
                 "waiting_room_min": minutes_between(visit.ready_for_clinical_at, visit.intake_complete_at),
                 "provider_wait_min": minutes_between(visit.intake_complete_at, visit.provider_in_at),
                 "provider_duration_min": minutes_between(visit.provider_in_at, visit.provider_out_at),
+                "other_duration_min": other_duration_minutes(visit),
                 "lab_duration_min": lab_duration_minutes(visit),
                 "total_visit_min": minutes_between(visit.arrived_at, visit.checkout_at),
+                "other_pending_slots": other_pending_slots(visit),
+                "other_can_begin": other_can_begin(visit),
+                "other_begin_options": other_begin_options(visit),
             }
         )
 
@@ -473,6 +504,7 @@ def dashboard(
 def create_visit(
     request: Request,
     mrn: str = Form(...),
+    visit_type: str | None = Form(default=None),
     location_id: int = Form(...),
     provider_id: int = Form(...),
     filter_location_id: list[int] = Form(default=[]),
@@ -489,8 +521,8 @@ def create_visit(
     user = require_user(request, db)
     if isinstance(user, RedirectResponse):
         return user
-    if user.role not in {RoleEnum.FD, RoleEnum.ADMIN}:
-        set_flash(request, "error", "Only FD/Admin can create visits.")
+    if user.role not in {RoleEnum.FD, RoleEnum.AUDITOR, RoleEnum.ADMIN}:
+        set_flash(request, "error", "Only FD/Auditor/Admin can create visits.")
         return RedirectResponse(url="/dashboard", status_code=303)
 
     persisted_location_ids = filter_location_id if location_filter_applied else [location_id]
@@ -499,6 +531,20 @@ def create_visit(
 
     if not mrn.strip():
         set_flash(request, "error", "MRN is required.")
+        return RedirectResponse(
+            url=dashboard_redirect_url(
+                persisted_location_ids,
+                persisted_provider_ids,
+                visit_date or date.today().strftime("%Y-%m-%d"),
+                search,
+                hide_complete,
+                location_filter_applied,
+                provider_filter_applied,
+            ),
+            status_code=303,
+        )
+    if not (visit_type or "").strip():
+        set_flash(request, "error", "Visit Type is required.")
         return RedirectResponse(
             url=dashboard_redirect_url(
                 persisted_location_ids,
@@ -523,6 +569,7 @@ def create_visit(
 
     visit = Visit(
         mrn=mrn.strip(),
+        visit_type=visit_type.strip(),
         location_id=location_id,
         provider_id=provider_id,
         arrived_at=None if pre_arrival else now_local(),
@@ -636,6 +683,9 @@ def visit_action(
     filter_provider_id: list[int] = Form(default=[]),
     visit_date: str = Form(...),
     delay_note: str | None = Form(default=None),
+    other_type: str | None = Form(default=None),
+    other_destination: str | None = Form(default=None),
+    other_end_slot: str | None = Form(default=None),
     search: str | None = Form(default=None),
     hide_complete: bool = Form(default=False),
     location_filter_applied: bool = Form(default=False),
@@ -653,10 +703,103 @@ def visit_action(
         set_flash(request, "error", "Visit not found.")
     else:
         try:
-            set_timestamp(visit, action_field, user, db, delay_note=delay_note)
+            set_timestamp(
+                visit,
+                action_field,
+                user,
+                db,
+                delay_note=delay_note,
+                other_type=other_type,
+                other_destination=other_destination,
+                other_end_slot=other_end_slot,
+            )
             set_flash(request, "success", f"{FIELD_LABELS[action_field]} recorded for MRN {visit.mrn}.")
         except ValidationError as exc:
             set_flash(request, "error", str(exc))
+
+    return RedirectResponse(
+        url=dashboard_redirect_url(
+            filter_location_id,
+            filter_provider_id,
+            visit_date,
+            search,
+            hide_complete,
+            location_filter_applied,
+            provider_filter_applied,
+        ),
+        status_code=303,
+    )
+
+
+@app.post("/visits/{visit_id}/declined")
+def visit_declined_participation(
+    request: Request,
+    visit_id: int,
+    declined_participation: bool = Form(default=False),
+    filter_location_id: list[int] = Form(default=[]),
+    filter_provider_id: list[int] = Form(default=[]),
+    visit_date: str = Form(...),
+    search: str | None = Form(default=None),
+    hide_complete: bool = Form(default=False),
+    location_filter_applied: bool = Form(default=False),
+    provider_filter_applied: bool = Form(default=False),
+    db: Session = Depends(get_db),
+):
+    user = require_user(request, db)
+    if isinstance(user, RedirectResponse):
+        return user
+
+    persist_user_context(user, filter_location_id, filter_provider_id, db)
+
+    visit = db.query(Visit).filter(Visit.id == visit_id).first()
+    if not visit:
+        set_flash(request, "error", "Visit not found.")
+    else:
+        visit.declined_participation = declined_participation
+        db.add(visit)
+        db.commit()
+
+    return RedirectResponse(
+        url=dashboard_redirect_url(
+            filter_location_id,
+            filter_provider_id,
+            visit_date,
+            search,
+            hide_complete,
+            location_filter_applied,
+            provider_filter_applied,
+        ),
+        status_code=303,
+    )
+
+
+@app.post("/visits/{visit_id}/no-show")
+def visit_no_show(
+    request: Request,
+    visit_id: int,
+    no_show: bool = Form(default=False),
+    filter_location_id: list[int] = Form(default=[]),
+    filter_provider_id: list[int] = Form(default=[]),
+    visit_date: str = Form(...),
+    search: str | None = Form(default=None),
+    hide_complete: bool = Form(default=False),
+    location_filter_applied: bool = Form(default=False),
+    provider_filter_applied: bool = Form(default=False),
+    db: Session = Depends(get_db),
+):
+    user = require_user(request, db)
+    if isinstance(user, RedirectResponse):
+        return user
+
+    persist_user_context(user, filter_location_id, filter_provider_id, db)
+
+    visit = db.query(Visit).filter(Visit.id == visit_id).first()
+    if not visit:
+        set_flash(request, "error", "Visit not found.")
+    else:
+        visit.no_show = no_show
+        db.add(visit)
+        db.commit()
 
     return RedirectResponse(
         url=dashboard_redirect_url(
@@ -773,14 +916,47 @@ def admin_override(
     return RedirectResponse(url=f"/admin?visit_id={visit_id}&field_name={field_name}", status_code=303)
 
 
+@app.get("/admin/audit-export")
+def admin_audit_export(
+    request: Request,
+    visit_id: int | None = None,
+    db: Session = Depends(get_db),
+):
+    user = require_user(request, db)
+    if isinstance(user, RedirectResponse):
+        return user
+    if user.role != RoleEnum.ADMIN:
+        return RedirectResponse(url="/dashboard", status_code=303)
+    if not visit_id:
+        return Response("Visit is required for audit export.", status_code=400)
+
+    audit_rows = (
+        db.query(AuditLog)
+        .options(joinedload(AuditLog.changed_by_user))
+        .filter(AuditLog.visit_id == visit_id)
+        .order_by(AuditLog.changed_at.desc())
+        .all()
+    )
+    data = build_audit_export(audit_rows, FIELD_LABELS)
+    headers = {
+        "Content-Disposition": f'attachment; filename="audit_visit_{visit_id}.xlsx"',
+        "Cache-Control": "no-store",
+    }
+    return StreamingResponse(
+        BytesIO(data),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers=headers,
+    )
+
+
 @app.get("/export", response_class=HTMLResponse)
 def export_page(request: Request, db: Session = Depends(get_db)):
     user = require_user(request, db)
     if isinstance(user, RedirectResponse):
         return user
 
-    locations = db.query(Location).order_by(Location.name).all()
-    providers = db.query(Provider).order_by(Provider.name).all()
+    locations = db.query(Location).filter(Location.is_hidden.is_(False)).order_by(Location.name).all()
+    providers = db.query(Provider).filter(Provider.is_hidden.is_(False)).order_by(Provider.name).all()
     return templates.TemplateResponse(
         "export.html",
         {
@@ -822,7 +998,7 @@ def export_download(
 
     query = (
         db.query(Visit)
-        .options(joinedload(Visit.location), joinedload(Visit.provider))
+        .options(joinedload(Visit.location), joinedload(Visit.provider), joinedload(Visit.created_by_user))
         .filter(Visit.created_at >= start_dt, Visit.created_at <= end_dt)
         .order_by(Visit.created_at.asc())
     )
@@ -923,10 +1099,36 @@ def parameters_reset_password(
     return RedirectResponse(url="/parameters", status_code=303)
 
 
+@app.post("/parameters/users/{user_id}/hidden")
+def parameters_update_user_hidden(
+    request: Request,
+    user_id: int,
+    is_hidden: bool = Form(default=False),
+    db: Session = Depends(get_db),
+):
+    user = require_user(request, db)
+    if isinstance(user, RedirectResponse):
+        return user
+    if user.role != RoleEnum.ADMIN:
+        return RedirectResponse(url="/dashboard", status_code=303)
+
+    target_user = db.query(User).filter(User.id == user_id).first()
+    if not target_user:
+        set_flash(request, "error", "User not found.")
+        return RedirectResponse(url="/parameters", status_code=303)
+
+    target_user.is_hidden = is_hidden
+    db.add(target_user)
+    db.commit()
+    set_flash(request, "success", f"Hidden updated for {target_user.username}.")
+    return RedirectResponse(url="/parameters", status_code=303)
+
+
 @app.post("/parameters/locations")
 def parameters_add_location(
     request: Request,
     name: str = Form(...),
+    is_hidden: bool = Form(default=False),
     db: Session = Depends(get_db),
 ):
     user = require_user(request, db)
@@ -943,7 +1145,7 @@ def parameters_add_location(
         set_flash(request, "error", "That location already exists.")
         return RedirectResponse(url="/parameters", status_code=303)
 
-    db.add(Location(name=candidate))
+    db.add(Location(name=candidate, is_hidden=is_hidden))
     db.commit()
     set_flash(request, "success", f"Location {candidate} added.")
     return RedirectResponse(url="/parameters", status_code=303)
@@ -981,10 +1183,36 @@ def parameters_update_location(
     return RedirectResponse(url="/parameters", status_code=303)
 
 
+@app.post("/parameters/locations/{location_id}/hidden")
+def parameters_update_location_hidden(
+    request: Request,
+    location_id: int,
+    is_hidden: bool = Form(default=False),
+    db: Session = Depends(get_db),
+):
+    user = require_user(request, db)
+    if isinstance(user, RedirectResponse):
+        return user
+    if user.role != RoleEnum.ADMIN:
+        return RedirectResponse(url="/dashboard", status_code=303)
+
+    location = db.query(Location).filter(Location.id == location_id).first()
+    if not location:
+        set_flash(request, "error", "Location not found.")
+        return RedirectResponse(url="/parameters", status_code=303)
+
+    location.is_hidden = is_hidden
+    db.add(location)
+    db.commit()
+    set_flash(request, "success", "Location hidden state updated.")
+    return RedirectResponse(url="/parameters", status_code=303)
+
+
 @app.post("/parameters/providers")
 def parameters_add_provider(
     request: Request,
     name: str = Form(...),
+    is_hidden: bool = Form(default=False),
     db: Session = Depends(get_db),
 ):
     user = require_user(request, db)
@@ -1001,7 +1229,7 @@ def parameters_add_provider(
         set_flash(request, "error", "That provider already exists.")
         return RedirectResponse(url="/parameters", status_code=303)
 
-    db.add(Provider(name=candidate))
+    db.add(Provider(name=candidate, is_hidden=is_hidden))
     db.commit()
     set_flash(request, "success", f"Provider {candidate} added.")
     return RedirectResponse(url="/parameters", status_code=303)
@@ -1036,6 +1264,31 @@ def parameters_update_provider(
     db.add(provider)
     db.commit()
     set_flash(request, "success", "Provider updated.")
+    return RedirectResponse(url="/parameters", status_code=303)
+
+
+@app.post("/parameters/providers/{provider_id}/hidden")
+def parameters_update_provider_hidden(
+    request: Request,
+    provider_id: int,
+    is_hidden: bool = Form(default=False),
+    db: Session = Depends(get_db),
+):
+    user = require_user(request, db)
+    if isinstance(user, RedirectResponse):
+        return user
+    if user.role != RoleEnum.ADMIN:
+        return RedirectResponse(url="/dashboard", status_code=303)
+
+    provider = db.query(Provider).filter(Provider.id == provider_id).first()
+    if not provider:
+        set_flash(request, "error", "Provider not found.")
+        return RedirectResponse(url="/parameters", status_code=303)
+
+    provider.is_hidden = is_hidden
+    db.add(provider)
+    db.commit()
+    set_flash(request, "success", "Provider hidden state updated.")
     return RedirectResponse(url="/parameters", status_code=303)
 
 

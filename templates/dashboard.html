@@ -42,11 +42,48 @@
   </form>
 </section>
 
-{% if current_user.role.value in ['fd', 'admin'] %}
+{% if current_user.role.value in ['fd', 'auditor', 'admin'] %}
 <section class="panel">
   <h2>New Visit</h2>
   <form method="post" action="visits" class="inline-form">
     <label>MRN <input type="text" name="mrn" required /></label>
+    <label>Visit Type
+      <select name="visit_type" required>
+        <option value="" disabled selected>Select Type</option>
+        <option value="360 Exam">360 Exam</option>
+        <option value="Annual Wellness Visit MEDICARE">Annual Wellness Visit MEDICARE</option>
+        <option value="Choose Well Screening">Choose Well Screening</option>
+        <option value="Cigna Health Spring 360">Cigna Health Spring 360</option>
+        <option value="Colposcopy">Colposcopy</option>
+        <option value="Complete Physical Exam">Complete Physical Exam</option>
+        <option value="DOT Physical">DOT Physical</option>
+        <option value="DSS-Child Exam">DSS-Child Exam</option>
+        <option value="Estab Best Chance">Estab Best Chance</option>
+        <option value="Estab HFU Walk In">Estab HFU Walk In</option>
+        <option value="Estab Walk In">Estab Walk In</option>
+        <option value="Established Well Child">Established Well Child</option>
+        <option value="Flu Shot">Flu Shot</option>
+        <option value="Follow Up">Follow Up</option>
+        <option value="GYN Procedure">GYN Procedure</option>
+        <option value="Hospital Follow Up">Hospital Follow Up</option>
+        <option value="IUD Consult">IUD Consult</option>
+        <option value="Medicare IPPE">Medicare IPPE</option>
+        <option value="New Best Chance">New Best Chance</option>
+        <option value="New HFU Walk In">New HFU Walk In</option>
+        <option value="New OB">New OB</option>
+        <option value="New Patient Exam">New Patient Exam</option>
+        <option value="New Prenatal Screening">New Prenatal Screening</option>
+        <option value="New Walk In">New Walk In</option>
+        <option value="New Well Child">New Well Child</option>
+        <option value="Newborn Screening">Newborn Screening</option>
+        <option value="Non-Strees Test">Non-Strees Test</option>
+        <option value="Office Visit">Office Visit</option>
+        <option value="Pap">Pap</option>
+        <option value="Post Partum">Post Partum</option>
+        <option value="Return OB">Return OB</option>
+        <option value="RITA-T Assessment">RITA-T Assessment</option>
+      </select>
+    </label>
     <input type="hidden" name="location_filter_applied" value="true" />
     <input type="hidden" name="provider_filter_applied" value="true" />
     {% for location_id in selected_location_ids %}
@@ -93,14 +130,17 @@
     <table>
       <thead>
         <tr>
+          <th class="opt-out-header">Opt Out</th>
           <th>MRN</th>
           <th>Status</th>
           <th>Arrived</th>
           <th>Ready</th>
-          <th>Intake Begins</th>
+          <th>Intake Begin</th>
+          <th>Intake Complete</th>
           <th>Provider In</th>
           <th>Provider Out</th>
-          <th>Lab</th>
+          <th>Other Begin</th>
+          <th>Other End</th>
           <th>Checkout</th>
           <th>Total (min)</th>
           <th>Action</th>
@@ -109,14 +149,84 @@
       <tbody>
       {% for row in visits %}
         <tr>
-          <td>{{ row.visit.mrn }}</td>
+          <td class="opt-out-cell">
+            <div>No-Show</div>
+            <form method="post" action="visits/{{ row.visit.id }}/no-show" class="mini-form">
+              <input type="hidden" name="location_filter_applied" value="true" />
+              <input type="hidden" name="provider_filter_applied" value="true" />
+              {% for location_id in selected_location_ids %}
+                <input type="hidden" name="filter_location_id" value="{{ location_id }}" />
+              {% endfor %}
+              {% for provider_id in selected_provider_ids %}
+                <input type="hidden" name="filter_provider_id" value="{{ provider_id }}" />
+              {% endfor %}
+              <input type="hidden" name="visit_date" value="{{ selected_date }}" />
+              <input type="hidden" name="search" value="{{ search }}" />
+              <input type="hidden" name="hide_complete" value="{{ 'true' if hide_complete else 'false' }}" />
+              <input type="hidden" name="no_show" value="{{ 'true' if row.visit.no_show else 'false' }}" />
+              <input
+                type="checkbox"
+                aria-label="No-show for MRN {{ row.visit.mrn }}"
+                {% if row.visit.no_show %}checked{% endif %}
+                onchange="this.form.querySelector('input[name=no_show]').value = this.checked ? 'true' : 'false'; this.form.submit();"
+              />
+            </form>
+            <div>Declined Participation</div>
+            <form method="post" action="visits/{{ row.visit.id }}/declined" class="mini-form">
+              <input type="hidden" name="location_filter_applied" value="true" />
+              <input type="hidden" name="provider_filter_applied" value="true" />
+              {% for location_id in selected_location_ids %}
+                <input type="hidden" name="filter_location_id" value="{{ location_id }}" />
+              {% endfor %}
+              {% for provider_id in selected_provider_ids %}
+                <input type="hidden" name="filter_provider_id" value="{{ provider_id }}" />
+              {% endfor %}
+              <input type="hidden" name="visit_date" value="{{ selected_date }}" />
+              <input type="hidden" name="search" value="{{ search }}" />
+              <input type="hidden" name="hide_complete" value="{{ 'true' if hide_complete else 'false' }}" />
+              <input type="hidden" name="declined_participation" value="{{ 'true' if row.visit.declined_participation else 'false' }}" />
+              <input
+                type="checkbox"
+                aria-label="Declined participation for MRN {{ row.visit.mrn }}"
+                {% if row.visit.declined_participation %}checked{% endif %}
+                onchange="this.form.querySelector('input[name=declined_participation]').value = this.checked ? 'true' : 'false'; this.form.submit();"
+              />
+            </form>
+          </td>
+          <td title="Visit Type: {{ row.visit.visit_type or 'N/A' }}&#10;Location: {{ row.visit.location.name }}&#10;Provider: {{ row.visit.provider.name }}">{{ row.visit.mrn }}</td>
           <td>{{ row.status }}</td>
           <td>{{ format_dt(row.visit.arrived_at) or '' }}{% if row.visit.arrived_delay_note %}<div class="timestamp-note">{{ row.visit.arrived_delay_note }}</div>{% endif %}</td>
           <td>{{ format_dt(row.visit.ready_for_clinical_at) or '' }}{% if row.visit.ready_for_clinical_delay_note %}<div class="timestamp-note">{{ row.visit.ready_for_clinical_delay_note }}</div>{% endif %}</td>
+          <td>{{ format_dt(row.visit.intake_begin_at) or '' }}{% if row.visit.intake_begin_delay_note %}<div class="timestamp-note">{{ row.visit.intake_begin_delay_note }}</div>{% endif %}</td>
           <td>{{ format_dt(row.visit.intake_complete_at) or '' }}{% if row.visit.intake_complete_delay_note %}<div class="timestamp-note">{{ row.visit.intake_complete_delay_note }}</div>{% endif %}</td>
           <td>{{ format_dt(row.visit.provider_in_at) or '' }}{% if row.visit.provider_in_delay_note %}<div class="timestamp-note">{{ row.visit.provider_in_delay_note }}</div>{% endif %}</td>
           <td>{{ format_dt(row.visit.provider_out_at) or '' }}{% if row.visit.provider_out_delay_note %}<div class="timestamp-note">{{ row.visit.provider_out_delay_note }}</div>{% endif %}</td>
-          <td>{{ format_dt(row.visit.lab_complete_at) or '' }}{% if row.visit.lab_complete_delay_note %}<div class="timestamp-note">{{ row.visit.lab_complete_delay_note }}</div>{% endif %}</td>
+          <td>
+            {% if row.visit.other_begin_log %}
+              <div class="timestamp-note">
+                {% for log_line in row.visit.other_begin_log.split('\n') %}
+                  <div class="other-log-line {{ 'other-log-gold' if loop.index0 is divisibleby 2 else 'other-log-salmon' }}">{{ log_line }}</div>
+                  <br>
+                {% endfor %}
+              </div>
+            {% else %}
+              {{ format_dt(row.visit.other_begin_at) or '' }}
+              {% if row.visit.other_begin_delay_note %}<div class="timestamp-note">{{ row.visit.other_begin_delay_note }}</div>{% endif %}
+            {% endif %}
+          </td>
+          <td>
+            {% if row.visit.other_end_log %}
+              <div class="timestamp-note">
+                {% for log_line in row.visit.other_end_log.split('\n') %}
+                  <div class="other-log-line {{ 'other-log-gold' if loop.index0 is divisibleby 2 else 'other-log-salmon' }}">{{ log_line }}</div>
+                  <br>
+                {% endfor %}
+              </div>
+            {% else %}
+              {{ format_dt(row.visit.other_end_at) or '' }}
+              {% if row.visit.other_end_delay_note %}<div class="timestamp-note">{{ row.visit.other_end_delay_note }}</div>{% endif %}
+            {% endif %}
+          </td>
           <td>{{ format_dt(row.visit.checkout_at) or '' }}{% if row.visit.checkout_delay_note %}<div class="timestamp-note">{{ row.visit.checkout_delay_note }}</div>{% endif %}</td>
           <td>{{ row.total_visit_min or '' }}</td>
           <td>
@@ -155,13 +265,59 @@
                 <button type="submit">{{ row.alt_action_label }}</button>
               </form>
               {% endif %}
+              {% if current_user.role.value in ['nurse', 'auditor', 'admin'] and row.visit.intake_complete_at and not row.visit.checkout_at and row.other_can_begin %}
+              <form method="post" action="visits/{{ row.visit.id }}/action" class="mini-form">
+                <input type="hidden" name="action_field" value="other_begin_at" />
+                <input type="hidden" name="location_filter_applied" value="true" />
+                <input type="hidden" name="provider_filter_applied" value="true" />
+                {% for location_id in selected_location_ids %}
+                  <input type="hidden" name="filter_location_id" value="{{ location_id }}" />
+                {% endfor %}
+                {% for provider_id in selected_provider_ids %}
+                  <input type="hidden" name="filter_provider_id" value="{{ provider_id }}" />
+                {% endfor %}
+                <input type="hidden" name="visit_date" value="{{ selected_date }}" />
+                <input type="hidden" name="search" value="{{ search }}" />
+                <input type="hidden" name="hide_complete" value="{{ 'true' if hide_complete else 'false' }}" />
+                <select name="other_type" class="other-type-select">
+                  {% for option in row.other_begin_options %}
+                    <option value="{{ option.value }}">{{ option.label }}</option>
+                  {% endfor %}
+                </select>
+                <input type="text" name="other_destination" class="other-destination-input" placeholder="Pt sent where?" style="display: none;" />
+                <button type="submit" style="background-color: #1b7f2a; color: #ffffff;">Other Begin (Optional)</button>
+              </form>
+              {% endif %}
+              {% if current_user.role.value in ['nurse', 'auditor', 'admin'] and row.visit.intake_complete_at and not row.visit.checkout_at and row.other_pending_slots %}
+              <form method="post" action="visits/{{ row.visit.id }}/action" class="mini-form">
+                <input type="hidden" name="action_field" value="other_end_at" />
+                <input type="hidden" name="location_filter_applied" value="true" />
+                <input type="hidden" name="provider_filter_applied" value="true" />
+                {% for location_id in selected_location_ids %}
+                  <input type="hidden" name="filter_location_id" value="{{ location_id }}" />
+                {% endfor %}
+                {% for provider_id in selected_provider_ids %}
+                  <input type="hidden" name="filter_provider_id" value="{{ provider_id }}" />
+                {% endfor %}
+                <input type="hidden" name="visit_date" value="{{ selected_date }}" />
+                <input type="hidden" name="search" value="{{ search }}" />
+                <input type="hidden" name="hide_complete" value="{{ 'true' if hide_complete else 'false' }}" />
+                <select name="other_end_slot">
+                  {% for slot in row.other_pending_slots %}
+                    <option value="{{ slot.value }}">{{ slot.label }}</option>
+                  {% endfor %}
+                </select>
+                <input type="text" name="delay_note" placeholder="Notes go here" />
+                <button type="submit" style="background-color: #c92a2a; color: #ffffff;">Other End (Optional)</button>
+              </form>
+              {% endif %}
             {% else %}
               Complete
             {% endif %}
           </td>
         </tr>
       {% else %}
-        <tr><td colspan="11">No visits found.</td></tr>
+        <tr><td colspan="14">No visits found.</td></tr>
       {% endfor %}
       </tbody>
     </table>
@@ -181,6 +337,8 @@
     const preArrivalDateInput = document.getElementById("pre-arrival-date");
     const openLocationButton = document.getElementById("open-location-picker");
     const openProviderButton = document.getElementById("open-provider-picker");
+    const flashData = {{ flash | tojson }};
+    const userId = {{ current_user.id }};
     let activePickerWindow = null;
     const locationOptions = {{ location_picker_options | tojson }};
     const providerOptions = {{ provider_picker_options | tojson }};
@@ -341,6 +499,85 @@
     if (preArrivalCheckbox) {
       preArrivalCheckbox.addEventListener("change", syncPreArrivalDate);
       syncPreArrivalDate();
+    }
+
+    function syncOtherDestinationField(selectElement) {
+      const formEl = selectElement.closest("form");
+      if (!formEl) {
+        return;
+      }
+      const destinationInput = formEl.querySelector(".other-destination-input");
+      if (!destinationInput) {
+        return;
+      }
+      const shouldShow = selectElement.value === "OTHER";
+      destinationInput.style.display = shouldShow ? "inline-block" : "none";
+      if (!shouldShow) {
+        destinationInput.value = "";
+      }
+    }
+
+    document.querySelectorAll(".other-type-select").forEach((selectElement) => {
+      syncOtherDestinationField(selectElement);
+      selectElement.addEventListener("change", () => syncOtherDestinationField(selectElement));
+    });
+
+    function spawnParticles(kind, originX, originY, count) {
+      const colors = kind === "firework"
+        ? ["#ff6b6b", "#ffd166", "#4cc9f0", "#8ac926", "#b5179e"]
+        : ["#ffd166", "#ef476f", "#06d6a0", "#118ab2", "#8338ec"];
+      for (let i = 0; i < count; i += 1) {
+        const p = document.createElement("span");
+        p.className = `fx-particle fx-${kind}`;
+        p.style.left = `${originX}px`;
+        p.style.top = `${originY}px`;
+        p.style.backgroundColor = colors[i % colors.length];
+        const angle = (Math.PI * 2 * i) / count;
+        const speed = kind === "firework" ? 70 + Math.random() * 80 : 40 + Math.random() * 80;
+        p.style.setProperty("--dx", `${Math.cos(angle) * speed}px`);
+        p.style.setProperty("--dy", `${Math.sin(angle) * speed}px`);
+        document.body.appendChild(p);
+        window.setTimeout(() => p.remove(), kind === "firework" ? 2000 : 1000);
+      }
+    }
+
+    function runConfetti() {
+      const bursts = 6;
+      for (let i = 0; i < bursts; i += 1) {
+        window.setTimeout(() => {
+          const x = Math.round(window.innerWidth * (0.15 + Math.random() * 0.7));
+          const y = Math.round(window.innerHeight * (0.08 + Math.random() * 0.25));
+          spawnParticles("confetti", x, y, 28);
+        }, i * 140);
+      }
+    }
+
+    function runFirework() {
+      const x = Math.round(window.innerWidth * 0.85);
+      const y = Math.round(window.innerHeight * 0.22);
+      const burstPlan = [
+        { dx: 0, dy: 0, count: 18, delay: 0 },
+        { dx: -110, dy: 45, count: 16, delay: 220 },
+        { dx: 95, dy: 30, count: 16, delay: 420 },
+        { dx: -170, dy: -10, count: 14, delay: 620 },
+        { dx: 160, dy: 55, count: 14, delay: 820 },
+        { dx: -40, dy: 95, count: 16, delay: 1040 },
+      ];
+      burstPlan.forEach((burst) => {
+        window.setTimeout(() => {
+          spawnParticles("firework", x + burst.dx, y + burst.dy, burst.count);
+        }, burst.delay);
+      });
+    }
+
+    const firstLoginKey = `cct-first-login-${userId}`;
+    if (!window.localStorage.getItem(firstLoginKey)) {
+      runConfetti();
+      window.localStorage.setItem(firstLoginKey, "1");
+    }
+
+    if (flashData && flashData.level === "success" && typeof flashData.message === "string" && flashData.message.includes("Checkout recorded")) {
+      runFirework();
     }
 
     visitDateInput.addEventListener("change", () => form.requestSubmit());

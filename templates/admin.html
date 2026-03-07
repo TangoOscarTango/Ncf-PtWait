@@ -38,6 +38,12 @@
 
 <section class="panel">
   <h2>Audit Log{% if selected_visit_id %} for Visit #{{ selected_visit_id }}{% endif %}</h2>
+  {% if selected_visit_id %}
+  <form method="get" action="admin/audit-export" class="inline-form">
+    <input type="hidden" name="visit_id" value="{{ selected_visit_id }}" />
+    <button type="submit">Export Audit to Excel</button>
+  </form>
+  {% endif %}
   <table>
     <thead>
       <tr>
