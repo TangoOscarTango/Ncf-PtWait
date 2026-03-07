@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="static/styles.css" />
 </head>
 <body>
+  <canvas id="star-background" aria-hidden="true"></canvas>
   <header class="top-nav">
     <div class="brand">
       <img src="static/logo-medium.png" alt="Clinic logo" class="brand-logo" />
@@ -33,6 +34,112 @@
     {% block content %}{% endblock %}
   </main>
   <div class="app-version">v1.939659 -BLM</div>
+  <script>
+    (() => {
+      const canvas = document.getElementById("star-background");
+      if (!canvas) {
+        return;
+      }
+      const context = canvas.getContext("2d", { alpha: true });
+      if (!context) {
+        return;
+      }
+      const STAR_COUNT = 5;
+      const COLORS = ["#FFD700", "#FA8072", "#000000"];
+      const stars = [];
+      let width = window.innerWidth;
+      let height = window.innerHeight;
+
+      function random(min, max) {
+        return min + Math.random() * (max - min);
+      }
+
+      function randomVelocity() {
+        const speed = random(0.1, 0.5);
+        return Math.random() < 0.5 ? -speed : speed;
+      }
+
+      function createStar(x, y) {
+        return {
+          x,
+          y,
+          size: random(2, 5),
+          vx: randomVelocity(),
+          vy: randomVelocity(),
+          color: COLORS[Math.floor(Math.random() * COLORS.length)],
+          alpha: random(0.1, 0.3),
+        };
+      }
+
+      function respawnFromEdge(star) {
+        const edge = Math.floor(Math.random() * 4);
+        if (edge === 0) {
+          star.x = random(0, width);
+          star.y = -star.size;
+        } else if (edge === 1) {
+          star.x = width + star.size;
+          star.y = random(0, height);
+        } else if (edge === 2) {
+          star.x = random(0, width);
+          star.y = height + star.size;
+        } else {
+          star.x = -star.size;
+          star.y = random(0, height);
+        }
+        star.size = random(2, 5);
+        star.vx = randomVelocity();
+        star.vy = randomVelocity();
+        star.color = COLORS[Math.floor(Math.random() * COLORS.length)];
+        star.alpha = random(0.1, 0.3);
+      }
+
+      function resizeCanvas() {
+        width = window.innerWidth;
+        height = window.innerHeight;
+        canvas.width = width;
+        canvas.height = height;
+      }
+
+      function drawDiamond(star) {
+        context.globalAlpha = star.alpha;
+        context.fillStyle = star.color;
+        context.beginPath();
+        context.moveTo(star.x, star.y - star.size);
+        context.lineTo(star.x + star.size, star.y);
+        context.lineTo(star.x, star.y + star.size);
+        context.lineTo(star.x - star.size, star.y);
+        context.closePath();
+        context.fill();
+      }
+
+      function step() {
+        context.clearRect(0, 0, width, height);
+        for (let i = 0; i < stars.length; i += 1) {
+          const star = stars[i];
+          star.x += star.vx;
+          star.y += star.vy;
+          if (
+            star.x < -star.size ||
+            star.x > width + star.size ||
+            star.y < -star.size ||
+            star.y > height + star.size
+          ) {
+            respawnFromEdge(star);
+          }
+          drawDiamond(star);
+        }
+        context.globalAlpha = 1;
+        window.requestAnimationFrame(step);
+      }
+
+      resizeCanvas();
+      for (let i = 0; i < STAR_COUNT; i += 1) {
+        stars.push(createStar(random(0, width), random(0, height)));
+      }
+      window.addEventListener("resize", resizeCanvas);
+      window.requestAnimationFrame(step);
+    })();
+  </script>
   {% if current_user %}
   <script>
     (() => {

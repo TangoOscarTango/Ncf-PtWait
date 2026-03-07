@@ -1,12 +1,13 @@
-body { font-family: Arial, sans-serif; background: #f5f7fa; margin: 0; color: #222; }
+body { font-family: Arial, sans-serif; background: rgb(255,255,255); margin: 0; color: #222; }
+#star-background { position: fixed; inset: 0; width: 100vw; height: 100vh; background: rgb(255,255,255); z-index: 0; pointer-events: none; }
 [hidden] { display: none !important; }
-.top-nav { background: #1d3557; color: white; display: flex; justify-content: space-between; padding: 10px 20px; align-items: center; }
+.top-nav { background: #1d3557; color: white; display: flex; justify-content: space-between; padding: 10px 20px; align-items: center; position: relative; z-index: 1; }
 .top-nav a, .top-nav span { color: white; margin-left: 12px; text-decoration: none; font-size: 14px; }
 .brand { display: flex; flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 10px; }
 .brand h1 { margin: 0; font-size: 24px; line-height: 1; white-space: nowrap; }
 .brand-logo { width: 207px; height: 103px; display: block; object-fit: contain; }
 .nav-user { font-weight: 600; }
-.container { padding: 20px; }
+.container { padding: 20px; position: relative; z-index: 1; }
 .panel { background: white; border: 1px solid #d0d7de; border-radius: 6px; padding: 14px; margin-bottom: 16px; }
 .inline-form, .selectors { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
 label { display: flex; flex-direction: column; font-size: 13px; gap: 4px; }
@@ -45,7 +46,7 @@ th { background: #eef2f7; }
 .inline-check { flex-direction: row; align-items: center; gap: 6px; min-height: 31px; }
 .inline-check input { margin: 0; }
 .pre-arrival-date { min-width: 160px; }
-.app-version { color: #b5bcc6; font-size: 12px; text-align: right; padding: 0 20px 10px; }
+.app-version { color: #b5bcc6; font-size: 12px; text-align: right; padding: 0 20px 10px; position: relative; z-index: 1; }
 .fx-particle { position: fixed; width: 8px; height: 8px; border-radius: 2px; pointer-events: none; z-index: 1200; }
 .fx-confetti { animation: fxBurst 950ms ease-out forwards; }
 .fx-firework { border-radius: 50%; animation: fxBurst 1800ms ease-out forwards; }
