@@ -44,22 +44,26 @@
       if (!context) {
         return;
       }
-      const STAR_COUNT = 5;
+      const STAR_COUNT = 15;
       const COLORS = ["#FFD700", "#FA8072", "#000000"];
+      const LOGO_SPAWN_CHANCE = 0.01;
       const stars = [];
       let width = window.innerWidth;
       let height = window.innerHeight;
+      const logoImage = new Image();
+      logoImage.src = "static/ncfm-new-logo-alpha.png";
 
       function random(min, max) {
         return min + Math.random() * (max - min);
       }
 
       function randomVelocity() {
-        const speed = random(0.1, 0.5);
+        const speed = random(0.03, 0.15);
         return Math.random() < 0.5 ? -speed : speed;
       }
 
       function createStar(x, y) {
+        const isLogo = Math.random() < LOGO_SPAWN_CHANCE;
         return {
           x,
           y,
@@ -68,6 +72,7 @@
           vy: randomVelocity(),
           color: COLORS[Math.floor(Math.random() * COLORS.length)],
           alpha: random(0.1, 0.3),
+          isLogo,
         };
       }
 
@@ -91,6 +96,7 @@
         star.vy = randomVelocity();
         star.color = COLORS[Math.floor(Math.random() * COLORS.length)];
         star.alpha = random(0.1, 0.3);
+        star.isLogo = Math.random() < LOGO_SPAWN_CHANCE;
       }
 
       function resizeCanvas() {
@@ -101,6 +107,17 @@
       }
 
       function drawDiamond(star) {
+        if (star.isLogo && logoImage.complete && logoImage.naturalWidth > 0) {
+          context.globalAlpha = star.alpha;
+          context.drawImage(
+            logoImage,
+            star.x - star.size,
+            star.y - star.size,
+            star.size * 2,
+            star.size * 2
+          );
+          return;
+        }
         context.globalAlpha = star.alpha;
         context.fillStyle = star.color;
         context.beginPath();
@@ -110,6 +127,9 @@
         context.lineTo(star.x - star.size, star.y);
         context.closePath();
         context.fill();
+        context.strokeStyle = "rgba(255, 255, 255, 0.7)";
+        context.lineWidth = 1;
+        context.stroke();
       }
 
       function step() {
