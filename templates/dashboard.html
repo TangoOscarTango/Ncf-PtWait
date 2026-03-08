@@ -347,11 +347,26 @@
     const providerOptions = {{ provider_picker_options | tojson }};
     let selectedLocationIds = {{ selected_location_ids | tojson }};
     let selectedProviderIds = {{ selected_provider_ids | tojson }};
+    const dashboardScrollKey = "dashboard-scroll-y";
 
     if (!form || !visitDateInput) {
       return;
     }
     let searchDebounce = null;
+
+    const savedScroll = window.sessionStorage.getItem(dashboardScrollKey);
+    if (savedScroll !== null) {
+      window.sessionStorage.removeItem(dashboardScrollKey);
+      window.requestAnimationFrame(() => {
+        window.scrollTo(0, Number(savedScroll) || 0);
+      });
+    }
+
+    document.querySelectorAll('form[method="post"]').forEach((postForm) => {
+      postForm.addEventListener("submit", () => {
+        window.sessionStorage.setItem(dashboardScrollKey, String(window.scrollY || 0));
+      });
+    });
 
     function tomorrowIsoDate() {
       const tomorrow = new Date();
@@ -582,7 +597,7 @@
       } else {
         message = `GOAL ALREADY MET - ${checkoutVisitsLoggedToday} VISITS LOGGED TODAY`;
       }
-      const colors = ["rgba(255, 215, 0, 0.75)", "rgba(250, 128, 114, 0.75)", "rgba(0, 0, 255, 0.75)"];
+      const colors = ["rgba(184, 134, 11, 0.85)", "rgba(250, 128, 114, 0.75)", "rgba(0, 0, 255, 0.75)"];
       const centerX = Math.round(window.innerWidth * 0.5);
       const header = document.querySelector(".top-nav");
       const headerBottom = header ? Math.round(header.getBoundingClientRect().bottom) : 0;
@@ -605,9 +620,10 @@
       label.style.zIndex = "1600";
       label.style.opacity = "1";
       label.style.transition = "opacity 240ms ease-out";
-      for (let i = 0; i < message.length; i += 1) {
+      const words = message.split(" ");
+      for (let i = 0; i < words.length; i += 1) {
         const span = document.createElement("span");
-        span.textContent = message[i];
+        span.textContent = `${words[i]}${i < words.length - 1 ? " " : ""}`;
         span.style.color = colors[i % colors.length];
         label.appendChild(span);
       }

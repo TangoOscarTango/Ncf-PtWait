@@ -3,6 +3,7 @@ from functools import wraps
 from fastapi import Request
 from fastapi.responses import RedirectResponse
 from passlib.context import CryptContext
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models import RoleEnum, User
@@ -19,7 +20,8 @@ def verify_password(plain_password: str, password_hash: str) -> bool:
 
 
 def authenticate_user(db: Session, username: str, password: str) -> User | None:
-    user = db.query(User).filter(User.username == username).first()
+    normalized_username = (username or "").strip().lower()
+    user = db.query(User).filter(func.lower(User.username) == normalized_username).first()
     if not user or not user.is_active:
         return None
     if not verify_password(password, user.password_hash):

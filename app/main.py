@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response, Streamin
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from openpyxl import load_workbook
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session, joinedload
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -979,7 +979,7 @@ def account_update_username(
         set_flash(request, "error", f"Username must be {MAX_USERNAME_LENGTH} characters or fewer.")
         return RedirectResponse(url="/account", status_code=303)
 
-    existing_user = db.query(User).filter(User.username == candidate, User.id != user.id).first()
+    existing_user = db.query(User).filter(func.lower(User.username) == candidate.lower(), User.id != user.id).first()
     if existing_user:
         set_flash(request, "error", "That username is already in use.")
         return RedirectResponse(url="/account", status_code=303)
@@ -1531,7 +1531,7 @@ def parameters_create_user(
     if len(password) > MAX_PASSWORD_LENGTH:
         set_flash(request, "error", f"Password must be {MAX_PASSWORD_LENGTH} characters or fewer.")
         return RedirectResponse(url="/parameters", status_code=303)
-    if db.query(User).filter(User.username == candidate).first():
+    if db.query(User).filter(func.lower(User.username) == candidate.lower()).first():
         set_flash(request, "error", "That username already exists.")
         return RedirectResponse(url="/parameters", status_code=303)
 
@@ -1618,7 +1618,7 @@ def parameters_import_users(
     role_idx = header_index["role"]
     password_idx = header_index["temporary password"]
 
-    existing_usernames = {name for (name,) in db.query(User.username).all()}
+    existing_usernames = {name.lower() for (name,) in db.query(User.username).all()}
     seen_in_file: set[str] = set()
     created_usernames: list[str] = []
     skipped_existing = 0
@@ -1654,7 +1654,8 @@ def parameters_import_users(
             row_errors.append(f"Row {row_number}: Role must be one of admin, fd, nurse, auditor.")
             continue
 
-        if username in existing_usernames or username in seen_in_file:
+        username_lower = username.lower()
+        if username_lower in existing_usernames or username_lower in seen_in_file:
             skipped_existing += 1
             continue
 
@@ -1667,7 +1668,7 @@ def parameters_import_users(
                 must_change_password=True,
             )
         )
-        seen_in_file.add(username)
+        seen_in_file.add(username_lower)
         created_usernames.append(username)
 
     if created_usernames:
