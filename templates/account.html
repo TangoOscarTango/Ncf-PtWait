@@ -6,17 +6,24 @@
 </section>
 
 <section class="panel">
-  <h2>Update Username</h2>
+  <h2>Update User Settings</h2>
+  <form method="post" action="account/settings" class="inline-form">
+    <label class="inline-check">
+      <input type="checkbox" name="disable_fancy_effects" value="true" {% if current_user.disable_fancy_effects %}checked{% endif %} />
+      Disable Fancy Effects (fireworks, stars, animations)
+    </label>
+    <button type="submit">Save Settings</button>
+  </form>
+
+  <hr />
+
   <form method="post" action="account/username" class="inline-form">
     <label>Username
-      <input type="text" name="username" value="{{ current_user.username }}" required />
+      <input type="text" name="username" value="{{ current_user.username }}" maxlength="64" required />
     </label>
     <button type="submit">Save Username</button>
   </form>
-</section>
 
-<section class="panel">
-  <h2>Update Password</h2>
   <form method="post" action="account/password" class="inline-form">
     <label>Current Password
       <input type="password" name="current_password" minlength="8" maxlength="32" required />

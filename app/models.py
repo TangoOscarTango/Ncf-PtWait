@@ -23,6 +23,11 @@ class User(Base):
     role: Mapped[RoleEnum] = mapped_column(SqlEnum(RoleEnum), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_hidden: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    disable_fancy_effects: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    coins: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    daily_checkout_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    daily_checkout_date: Mapped[str | None] = mapped_column(String(10), nullable=True)
     preferred_location_id: Mapped[int | None] = mapped_column(ForeignKey("locations.id"), nullable=True)
     preferred_provider_id: Mapped[int | None] = mapped_column(ForeignKey("providers.id"), nullable=True)
     preferred_location_ids: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -110,3 +115,22 @@ class AuditLog(Base):
 
     visit: Mapped[Visit] = relationship("Visit", back_populates="audit_logs")
     changed_by_user: Mapped[User] = relationship("User")
+
+
+class AppVariable(Base):
+    __tablename__ = "app_variables"
+
+    key: Mapped[str] = mapped_column(String(120), primary_key=True)
+    value: Mapped[str] = mapped_column(String(255), nullable=False)
+
+
+class AdminActionLog(Base):
+    __tablename__ = "admin_action_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    action_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    details: Mapped[str] = mapped_column(Text, nullable=False)
+    performed_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    performed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, nullable=False)
+
+    performed_by_user: Mapped[User] = relationship("User")

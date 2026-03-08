@@ -1,6 +1,14 @@
 from datetime import date, datetime, timedelta
 from io import BytesIO
+import logging
+from pathlib import Path
+import re
+import shutil
+import threading
+import time
 from urllib.parse import urlencode
+from collections import defaultdict, deque
+from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
@@ -11,11 +19,12 @@ from sqlalchemy.orm import Session, joinedload
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.auth import authenticate_user, get_current_user, hash_password, verify_password
-from app.db import Base, SessionLocal, engine, get_db
-from app.models import AuditLog, Location, Provider, RoleEnum, User, Visit
+from app.db import Base, DATABASE_PATH, PROJECT_ROOT, SessionLocal, engine, get_db
+from app.models import AdminActionLog, AppVariable, AuditLog, Location, Provider, RoleEnum, User, Visit
 from app.seed import seed_initial_data
 from app.services import (
     build_audit_export,
+    build_logs_export,
     DELAY_NOTE_FIELDS,
     FIELD_LABELS,
     TIME_FIELDS,
@@ -38,11 +47,40 @@ from app.services import (
 )
 
 app = FastAPI(title="Patient Cycle Time")
-app.add_middleware(SessionMiddleware, secret_key="replace-this-in-production", https_only=False)
+app.add_middleware(
+    SessionMiddleware,
+    secret_key="replace-this-in-production",
+    https_only=False,
+    same_site="lax",
+    max_age=60 * 60 * 12,
+)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 MIN_PASSWORD_LENGTH = 8
 MAX_PASSWORD_LENGTH = 32
+DEFAULT_DAILY_CHECKOUT_GOAL = 6
+MAX_MRN_LENGTH = 32
+MAX_USERNAME_LENGTH = 64
+MAX_SEARCH_LENGTH = 200
+MAX_LOCATION_NAME_LENGTH = 120
+MAX_PROVIDER_NAME_LENGTH = 120
+MAX_VISIT_TYPE_LENGTH = 120
+MAX_EXPORT_RANGE_DAYS = 366
+SESSION_IDLE_TIMEOUT_SECONDS = 60 * 60
+SESSION_ABSOLUTE_TIMEOUT_SECONDS = 60 * 60 * 12
+RATE_LIMIT_RULES = {
+    ("POST", "/login"): (20, 60),
+    ("POST", "/admin/override"): (30, 60),
+    ("POST", "/admin/purge-zero-mrn"): (5, 60),
+    ("POST", "/admin/backup-db"): (4, 60),
+    ("GET", "/admin/logs-export"): (20, 60),
+    ("GET", "/admin/audit-export"): (20, 60),
+}
+_rate_limit_buckets: dict[tuple[str, str, str], deque[float]] = defaultdict(deque)
+_rate_limit_lock = threading.Lock()
+logger = logging.getLogger("ncf_ptwait")
+if not logging.getLogger().handlers:
+    logging.basicConfig(level=logging.INFO)
 
 
 def role_label(role: RoleEnum) -> str:
@@ -55,6 +93,63 @@ def role_label(role: RoleEnum) -> str:
 
 
 templates.env.globals["role_label"] = role_label
+
+
+def _request_client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _passes_rate_limit(request: Request) -> bool:
+    key = (request.method.upper(), request.url.path)
+    rule = RATE_LIMIT_RULES.get(key)
+    if not rule:
+        return True
+    max_requests, window_seconds = rule
+    now = time.time()
+    bucket_key = (request.method.upper(), request.url.path, _request_client_ip(request))
+    with _rate_limit_lock:
+        bucket = _rate_limit_buckets[bucket_key]
+        while bucket and now - bucket[0] > window_seconds:
+            bucket.popleft()
+        if len(bucket) >= max_requests:
+            return False
+        bucket.append(now)
+    return True
+
+
+def _is_same_origin(request: Request) -> bool:
+    origin = request.headers.get("origin") or request.headers.get("referer")
+    if not origin:
+        return True
+    parsed = urlparse(origin)
+    host = request.headers.get("host", "")
+    return parsed.netloc == host
+
+
+@app.middleware("http")
+async def security_and_observability_middleware(request: Request, call_next):
+    start = time.time()
+    if request.method.upper() in {"POST", "PUT", "PATCH", "DELETE"} and not _is_same_origin(request):
+        return Response("Invalid origin.", status_code=403)
+    if not _passes_rate_limit(request):
+        return Response("Too many requests. Please try again shortly.", status_code=429)
+
+    response = await call_next(request)
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; img-src 'self' data:; script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+    )
+    if request.method.upper() != "GET" or response.status_code >= 400:
+        duration_ms = int((time.time() - start) * 1000)
+        logger.info("%s %s -> %s (%sms)", request.method.upper(), request.url.path, response.status_code, duration_ms)
+    return response
 
 
 def summarize_selected_names(names: list[str], fallback_label: str) -> str:
@@ -77,6 +172,16 @@ def format_dt_minutes(value: datetime | None) -> str:
     return value.strftime("%Y-%m-%d %H:%M")
 
 
+def clamp_text(value: str | None, max_length: int) -> str:
+    return (value or "").strip()[:max_length]
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    return Response("Unexpected server error.", status_code=500)
+
+
 @app.on_event("startup")
 def startup() -> None:
     Base.metadata.create_all(bind=engine)
@@ -86,6 +191,8 @@ def startup() -> None:
         ensure_location_columns(db)
         ensure_provider_columns(db)
         ensure_visit_columns(db)
+        ensure_app_variables(db)
+        ensure_password_change_backfill(db)
         seed_initial_data(db)
     finally:
         db.close()
@@ -100,10 +207,41 @@ def pop_flash(request: Request):
 
 
 def require_user(request: Request, db: Session) -> User | RedirectResponse:
+    now_ts = int(time.time())
+    logged_in_at = int(request.session.get("logged_in_at", 0) or 0)
+    last_seen_at = int(request.session.get("last_seen_at", 0) or 0)
+    if logged_in_at and now_ts - logged_in_at > SESSION_ABSOLUTE_TIMEOUT_SECONDS:
+        request.session.clear()
+        return RedirectResponse(url="/", status_code=303)
+    if last_seen_at and now_ts - last_seen_at > SESSION_IDLE_TIMEOUT_SECONDS:
+        request.session.clear()
+        return RedirectResponse(url="/", status_code=303)
     user = get_current_user(request, db)
     if not user:
         return RedirectResponse(url="/", status_code=303)
+    request.session["last_seen_at"] = now_ts
+    if user.must_change_password and request.url.path not in {"/force-password", "/logout"}:
+        return RedirectResponse(url="/force-password", status_code=303)
     return user
+
+
+def require_admin(request: Request, db: Session) -> User | RedirectResponse:
+    user = require_user(request, db)
+    if isinstance(user, RedirectResponse):
+        return user
+    if user.role != RoleEnum.ADMIN:
+        return RedirectResponse(url="/dashboard", status_code=303)
+    return user
+
+
+def log_admin_action(db: Session, acting_user: User, action_name: str, details: str) -> None:
+    db.add(
+        AdminActionLog(
+            action_name=action_name,
+            details=details,
+            performed_by_user_id=acting_user.id,
+        )
+    )
 
 
 def ensure_user_preference_columns(db: Session) -> None:
@@ -121,6 +259,16 @@ def ensure_user_preference_columns(db: Session) -> None:
         db.execute(text("ALTER TABLE users ADD COLUMN preferred_provider_ids TEXT"))
     if "is_hidden" not in columns:
         db.execute(text("ALTER TABLE users ADD COLUMN is_hidden INTEGER NOT NULL DEFAULT 0"))
+    if "must_change_password" not in columns:
+        db.execute(text("ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0"))
+    if "disable_fancy_effects" not in columns:
+        db.execute(text("ALTER TABLE users ADD COLUMN disable_fancy_effects INTEGER NOT NULL DEFAULT 0"))
+    if "coins" not in columns:
+        db.execute(text("ALTER TABLE users ADD COLUMN coins INTEGER NOT NULL DEFAULT 0"))
+    if "daily_checkout_count" not in columns:
+        db.execute(text("ALTER TABLE users ADD COLUMN daily_checkout_count INTEGER NOT NULL DEFAULT 0"))
+    if "daily_checkout_date" not in columns:
+        db.execute(text("ALTER TABLE users ADD COLUMN daily_checkout_date TEXT"))
     db.commit()
 
 
@@ -171,6 +319,75 @@ def ensure_visit_columns(db: Session) -> None:
         if column_name not in columns:
             db.execute(text(f"ALTER TABLE visits ADD COLUMN {column_name} TEXT"))
     db.commit()
+
+
+def ensure_app_variables(db: Session) -> None:
+    existing = db.query(AppVariable).filter(AppVariable.key == "daily_checkout_goal").first()
+    if not existing:
+        db.add(AppVariable(key="daily_checkout_goal", value=str(DEFAULT_DAILY_CHECKOUT_GOAL)))
+        db.commit()
+
+
+def get_daily_checkout_goal(db: Session) -> int:
+    existing = db.query(AppVariable).filter(AppVariable.key == "daily_checkout_goal").first()
+    if not existing:
+        return DEFAULT_DAILY_CHECKOUT_GOAL
+    try:
+        return max(0, int((existing.value or "").strip()))
+    except ValueError:
+        return DEFAULT_DAILY_CHECKOUT_GOAL
+
+
+def set_daily_checkout_goal(db: Session, goal_value: int) -> None:
+    existing = db.query(AppVariable).filter(AppVariable.key == "daily_checkout_goal").first()
+    if not existing:
+        db.add(AppVariable(key="daily_checkout_goal", value=str(goal_value)))
+    else:
+        existing.value = str(goal_value)
+        db.add(existing)
+    db.commit()
+
+
+def ensure_password_change_backfill(db: Session) -> None:
+    marker_key = "password_force_backfill_done"
+    marker = db.query(AppVariable).filter(AppVariable.key == marker_key).first()
+    if marker:
+        return
+    users = db.query(User).all()
+    for user in users:
+        user.must_change_password = True
+        db.add(user)
+    db.add(AppVariable(key=marker_key, value="1"))
+    db.commit()
+
+
+def password_requirement_errors(password: str) -> list[str]:
+    errors: list[str] = []
+    if len(password) < MIN_PASSWORD_LENGTH:
+        errors.append(f"Must be at least {MIN_PASSWORD_LENGTH} characters.")
+    if not re.search(r"[A-Z]", password):
+        errors.append("Must include an uppercase letter.")
+    if not re.search(r"[a-z]", password):
+        errors.append("Must include a lowercase letter.")
+    if not re.search(r"[0-9]", password):
+        errors.append("Must include a number.")
+    if not re.search(r"[^A-Za-z0-9]", password):
+        errors.append("Must include a special character.")
+    if len(password) > MAX_PASSWORD_LENGTH:
+        errors.append(f"Must be {MAX_PASSWORD_LENGTH} characters or fewer.")
+    return errors
+
+
+def sync_user_daily_checkout_state(user: User, db: Session) -> int:
+    today_label = date.today().isoformat()
+    if user.daily_checkout_date == today_label:
+        return user.daily_checkout_count or 0
+    user.daily_checkout_date = today_label
+    user.daily_checkout_count = 0
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return 0
 
 
 def parse_id_csv(value: str | None) -> list[int]:
@@ -243,12 +460,13 @@ def build_filter_query(
     location_filter_applied: bool = True,
     provider_filter_applied: bool = True,
 ) -> str:
+    search_value = clamp_text(search, MAX_SEARCH_LENGTH)
     return urlencode(
         [
             *[("location_id", value) for value in location_ids],
             *[("provider_id", value) for value in provider_ids],
             ("visit_date", visit_date),
-            ("search", search or ""),
+            ("search", search_value),
             ("hide_complete", str(hide_complete).lower()),
             ("location_filter_applied", str(location_filter_applied).lower()),
             ("provider_filter_applied", str(provider_filter_applied).lower()),
@@ -283,6 +501,7 @@ def parameters_page_context(request: Request, user: User, db: Session) -> dict:
         "users": db.query(User).order_by(User.username.asc()).all(),
         "locations": db.query(Location).order_by(Location.name.asc()).all(),
         "providers": db.query(Provider).order_by(Provider.name.asc()).all(),
+        "daily_checkout_goal": get_daily_checkout_goal(db),
         "flash": pop_flash(request),
     }
 
@@ -332,14 +551,88 @@ def login(
             "login.html", {"request": request, "error": "Invalid username or password."}, status_code=401
         )
 
+    now_ts = int(time.time())
     request.session["user_id"] = user.id
-    return RedirectResponse(url="/dashboard", status_code=303)
+    request.session["logged_in_at"] = now_ts
+    request.session["last_seen_at"] = now_ts
+    return RedirectResponse(url="/force-password" if user.must_change_password else "/dashboard", status_code=303)
 
 
 @app.get("/logout")
 def logout(request: Request):
     request.session.clear()
     return RedirectResponse(url="/", status_code=303)
+
+
+@app.get("/healthz")
+def healthcheck():
+    return {"status": "ok", "time": datetime.now().isoformat()}
+
+
+@app.post("/admin/backup-db")
+def admin_backup_database(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    user = require_admin(request, db)
+    if isinstance(user, RedirectResponse):
+        return user
+    backup_dir = PROJECT_ROOT / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_path = backup_dir / f"clinic_cycle_time_{timestamp}.db"
+    shutil.copy2(DATABASE_PATH, backup_path)
+    log_admin_action(db, user, "database_backup", f"Created backup: {backup_path.name}")
+    db.commit()
+    set_flash(request, "success", f"Database backup created: {backup_path.name}")
+    return RedirectResponse(url="/admin", status_code=303)
+
+
+@app.get("/force-password", response_class=HTMLResponse)
+def force_password_page(request: Request, db: Session = Depends(get_db)):
+    user = require_user(request, db)
+    if isinstance(user, RedirectResponse):
+        return user
+    if not user.must_change_password:
+        return RedirectResponse(url="/dashboard", status_code=303)
+    return templates.TemplateResponse(
+        "force_password.html",
+        {
+            "request": request,
+            "current_user": None,
+            "flash": pop_flash(request),
+            "username": user.username,
+            "min_password_length": MIN_PASSWORD_LENGTH,
+        },
+    )
+
+
+@app.post("/force-password")
+def force_password_update(
+    request: Request,
+    new_password: str = Form(...),
+    confirm_password: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    user = require_user(request, db)
+    if isinstance(user, RedirectResponse):
+        return user
+    if not user.must_change_password:
+        return RedirectResponse(url="/dashboard", status_code=303)
+    if new_password != confirm_password:
+        set_flash(request, "error", "New password and confirmation do not match.")
+        return RedirectResponse(url="/force-password", status_code=303)
+    requirement_errors = password_requirement_errors(new_password)
+    if requirement_errors:
+        set_flash(request, "error", " ".join(requirement_errors))
+        return RedirectResponse(url="/force-password", status_code=303)
+
+    user.password_hash = hash_password(new_password)
+    user.must_change_password = False
+    db.add(user)
+    db.commit()
+    set_flash(request, "success", "Password updated.")
+    return RedirectResponse(url="/dashboard", status_code=303)
 
 
 @app.get("/dashboard", response_class=HTMLResponse)
@@ -357,6 +650,8 @@ def dashboard(
     user = require_user(request, db)
     if isinstance(user, RedirectResponse):
         return user
+    daily_checkout_goal = get_daily_checkout_goal(db)
+    daily_checkouts_logged = sync_user_daily_checkout_state(user, db)
 
     locations = db.query(Location).filter(Location.is_hidden.is_(False)).order_by(Location.name).all()
     providers = db.query(Provider).filter(Provider.is_hidden.is_(False)).order_by(Provider.name).all()
@@ -390,7 +685,7 @@ def dashboard(
         except ValueError:
             selected_date = today
 
-    search_text = (search or "").strip()
+    search_text = clamp_text(search, MAX_SEARCH_LENGTH)
     search_text_lower = search_text.lower()
 
     visits = []
@@ -496,6 +791,8 @@ def dashboard(
             ),
             "location_picker_options": [{"value": location.id, "label": location.name} for location in locations],
             "provider_picker_options": [{"value": provider.id, "label": provider.name} for provider in providers],
+            "checkout_goal_remaining": daily_checkout_goal - daily_checkouts_logged,
+            "checkout_visits_logged_today": daily_checkouts_logged,
         },
     )
 
@@ -529,7 +826,8 @@ def create_visit(
     persisted_provider_ids = filter_provider_id if provider_filter_applied else [provider_id]
     persist_user_context(user, persisted_location_ids, persisted_provider_ids, db)
 
-    if not mrn.strip():
+    normalized_mrn = mrn.strip()
+    if not normalized_mrn:
         set_flash(request, "error", "MRN is required.")
         return RedirectResponse(
             url=dashboard_redirect_url(
@@ -543,6 +841,34 @@ def create_visit(
             ),
             status_code=303,
         )
+    if len(normalized_mrn) > MAX_MRN_LENGTH:
+        set_flash(request, "error", f"MRN must be {MAX_MRN_LENGTH} characters or fewer.")
+        return RedirectResponse(
+            url=dashboard_redirect_url(
+                persisted_location_ids,
+                persisted_provider_ids,
+                visit_date or date.today().strftime("%Y-%m-%d"),
+                clamp_text(search, MAX_SEARCH_LENGTH),
+                hide_complete,
+                location_filter_applied,
+                provider_filter_applied,
+            ),
+            status_code=303,
+        )
+    if not normalized_mrn.isdigit():
+        set_flash(request, "error", "MRN must contain numbers only.")
+        return RedirectResponse(
+            url=dashboard_redirect_url(
+                persisted_location_ids,
+                persisted_provider_ids,
+                visit_date or date.today().strftime("%Y-%m-%d"),
+                clamp_text(search, MAX_SEARCH_LENGTH),
+                hide_complete,
+                location_filter_applied,
+                provider_filter_applied,
+            ),
+            status_code=303,
+        )
     if not (visit_type or "").strip():
         set_flash(request, "error", "Visit Type is required.")
         return RedirectResponse(
@@ -550,7 +876,22 @@ def create_visit(
                 persisted_location_ids,
                 persisted_provider_ids,
                 visit_date or date.today().strftime("%Y-%m-%d"),
-                search,
+                clamp_text(search, MAX_SEARCH_LENGTH),
+                hide_complete,
+                location_filter_applied,
+                provider_filter_applied,
+            ),
+            status_code=303,
+        )
+    normalized_visit_type = visit_type.strip()
+    if len(normalized_visit_type) > MAX_VISIT_TYPE_LENGTH:
+        set_flash(request, "error", f"Visit Type must be {MAX_VISIT_TYPE_LENGTH} characters or fewer.")
+        return RedirectResponse(
+            url=dashboard_redirect_url(
+                persisted_location_ids,
+                persisted_provider_ids,
+                visit_date or date.today().strftime("%Y-%m-%d"),
+                clamp_text(search, MAX_SEARCH_LENGTH),
                 hide_complete,
                 location_filter_applied,
                 provider_filter_applied,
@@ -568,8 +909,8 @@ def create_visit(
             pass
 
     visit = Visit(
-        mrn=mrn.strip(),
-        visit_type=visit_type.strip(),
+        mrn=normalized_mrn,
+        visit_type=normalized_visit_type,
         location_id=location_id,
         provider_id=provider_id,
         arrived_at=None if pre_arrival else now_local(),
@@ -589,7 +930,7 @@ def create_visit(
             persisted_location_ids,
             persisted_provider_ids,
             visit_date or date.today().strftime("%Y-%m-%d"),
-            search,
+            clamp_text(search, MAX_SEARCH_LENGTH),
             hide_complete,
             location_filter_applied,
             provider_filter_applied,
@@ -629,6 +970,9 @@ def account_update_username(
     if not candidate:
         set_flash(request, "error", "Username is required.")
         return RedirectResponse(url="/account", status_code=303)
+    if len(candidate) > MAX_USERNAME_LENGTH:
+        set_flash(request, "error", f"Username must be {MAX_USERNAME_LENGTH} characters or fewer.")
+        return RedirectResponse(url="/account", status_code=303)
 
     existing_user = db.query(User).filter(User.username == candidate, User.id != user.id).first()
     if existing_user:
@@ -657,20 +1001,35 @@ def account_update_password(
     if not verify_password(current_password, user.password_hash):
         set_flash(request, "error", "Current password is incorrect.")
         return RedirectResponse(url="/account", status_code=303)
-    if len(new_password) < MIN_PASSWORD_LENGTH:
-        set_flash(request, "error", f"New password must be at least {MIN_PASSWORD_LENGTH} characters.")
-        return RedirectResponse(url="/account", status_code=303)
-    if len(new_password) > MAX_PASSWORD_LENGTH:
-        set_flash(request, "error", f"New password must be {MAX_PASSWORD_LENGTH} characters or fewer.")
-        return RedirectResponse(url="/account", status_code=303)
     if new_password != confirm_password:
         set_flash(request, "error", "New password and confirmation do not match.")
         return RedirectResponse(url="/account", status_code=303)
+    requirement_errors = password_requirement_errors(new_password)
+    if requirement_errors:
+        set_flash(request, "error", " ".join(requirement_errors))
+        return RedirectResponse(url="/account", status_code=303)
 
     user.password_hash = hash_password(new_password)
+    user.must_change_password = False
     db.add(user)
     db.commit()
     set_flash(request, "success", "Password updated.")
+    return RedirectResponse(url="/account", status_code=303)
+
+
+@app.post("/account/settings")
+def account_update_settings(
+    request: Request,
+    disable_fancy_effects: bool = Form(default=False),
+    db: Session = Depends(get_db),
+):
+    user = require_user(request, db)
+    if isinstance(user, RedirectResponse):
+        return user
+    user.disable_fancy_effects = disable_fancy_effects
+    db.add(user)
+    db.commit()
+    set_flash(request, "success", "User settings updated.")
     return RedirectResponse(url="/account", status_code=303)
 
 
@@ -823,11 +1182,9 @@ def admin_page(
     field_name: str | None = None,
     db: Session = Depends(get_db),
 ):
-    user = require_user(request, db)
+    user = require_admin(request, db)
     if isinstance(user, RedirectResponse):
         return user
-    if user.role != RoleEnum.ADMIN:
-        return RedirectResponse(url="/dashboard", status_code=303)
 
     query = db.query(Visit).options(joinedload(Visit.location), joinedload(Visit.provider)).order_by(Visit.created_at.desc())
     if mrn:
@@ -852,6 +1209,13 @@ def admin_page(
             .order_by(AuditLog.changed_at.desc())
             .all()
         )
+    admin_action_rows = (
+        db.query(AdminActionLog)
+        .options(joinedload(AdminActionLog.performed_by_user))
+        .order_by(AdminActionLog.performed_at.desc())
+        .limit(50)
+        .all()
+    )
 
     return templates.TemplateResponse(
         "admin.html",
@@ -867,6 +1231,7 @@ def admin_page(
             "flash": pop_flash(request),
             "mrn": mrn or "",
             "search_date": search_date or "",
+            "admin_action_rows": admin_action_rows,
             "format_dt": format_dt,
             "format_dt_minutes": format_dt_minutes,
             "format_dt_local_input": format_dt_local_input,
@@ -888,11 +1253,9 @@ def admin_override(
     reason: str = Form(...),
     db: Session = Depends(get_db),
 ):
-    user = require_user(request, db)
+    user = require_admin(request, db)
     if isinstance(user, RedirectResponse):
         return user
-    if user.role != RoleEnum.ADMIN:
-        return RedirectResponse(url="/dashboard", status_code=303)
 
     visit = db.query(Visit).filter(Visit.id == visit_id).first()
     if not visit:
@@ -909,11 +1272,47 @@ def admin_override(
 
     try:
         override_timestamp(visit, field_name, parsed_new_value, reason, user, db)
+        log_admin_action(db, user, "timestamp_override", f"Visit #{visit.id}: {field_name} overridden.")
+        db.commit()
         set_flash(request, "success", "Timestamp overridden and audit log updated.")
     except ValidationError as exc:
         set_flash(request, "error", str(exc))
 
     return RedirectResponse(url=f"/admin?visit_id={visit_id}&field_name={field_name}", status_code=303)
+
+
+@app.post("/admin/purge-zero-mrn")
+def admin_purge_zero_mrn_visits(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    user = require_admin(request, db)
+    if isinstance(user, RedirectResponse):
+        return user
+
+    candidate_visits = db.query(Visit).all()
+    visits_to_delete: list[Visit] = []
+    for visit in candidate_visits:
+        normalized_mrn = (visit.mrn or "").strip()
+        if normalized_mrn and all(char == "0" for char in normalized_mrn):
+            visits_to_delete.append(visit)
+
+    deleted_visit_count = len(visits_to_delete)
+    deleted_audit_log_count = 0
+    if visits_to_delete:
+        visit_ids = [visit.id for visit in visits_to_delete]
+        deleted_audit_log_count = db.query(AuditLog).filter(AuditLog.visit_id.in_(visit_ids)).count()
+        for visit in visits_to_delete:
+            db.delete(visit)
+
+    action_details = (
+        f"Deleted {deleted_visit_count} visit records and {deleted_audit_log_count} audit logs "
+        "for MRNs containing all zeroes."
+    )
+    log_admin_action(db, user, "purge_zero_mrn_records", action_details)
+    db.commit()
+    set_flash(request, "success", action_details)
+    return RedirectResponse(url="/admin", status_code=303)
 
 
 @app.get("/admin/audit-export")
@@ -922,11 +1321,9 @@ def admin_audit_export(
     visit_id: int | None = None,
     db: Session = Depends(get_db),
 ):
-    user = require_user(request, db)
+    user = require_admin(request, db)
     if isinstance(user, RedirectResponse):
         return user
-    if user.role != RoleEnum.ADMIN:
-        return RedirectResponse(url="/dashboard", status_code=303)
     if not visit_id:
         return Response("Visit is required for audit export.", status_code=400)
 
@@ -938,8 +1335,50 @@ def admin_audit_export(
         .all()
     )
     data = build_audit_export(audit_rows, FIELD_LABELS)
+    log_admin_action(db, user, "visit_audit_export", f"Exported audit log for visit #{visit_id}.")
+    db.commit()
     headers = {
         "Content-Disposition": f'attachment; filename="audit_visit_{visit_id}.xlsx"',
+        "Cache-Control": "no-store",
+    }
+    return StreamingResponse(
+        BytesIO(data),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers=headers,
+    )
+
+
+@app.get("/admin/logs-export")
+def admin_logs_export(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    user = require_admin(request, db)
+    if isinstance(user, RedirectResponse):
+        return user
+
+    visit_audit_rows = (
+        db.query(AuditLog)
+        .options(joinedload(AuditLog.changed_by_user))
+        .order_by(AuditLog.changed_at.desc())
+        .all()
+    )
+    system_audit_rows = (
+        db.query(AdminActionLog)
+        .options(joinedload(AdminActionLog.performed_by_user))
+        .order_by(AdminActionLog.performed_at.desc())
+        .all()
+    )
+    data = build_logs_export(visit_audit_rows, system_audit_rows, FIELD_LABELS)
+    log_admin_action(
+        db,
+        user,
+        "all_audit_logs_export",
+        f"Exported {len(visit_audit_rows)} visit rows and {len(system_audit_rows)} system rows.",
+    )
+    db.commit()
+    headers = {
+        "Content-Disposition": 'attachment; filename="all_audit_logs.xlsx"',
         "Cache-Control": "no-store",
     }
     return StreamingResponse(
@@ -987,6 +1426,10 @@ def export_download(
         end = datetime.strptime(end_date, "%Y-%m-%d").date()
     except ValueError:
         return Response("Invalid date range.", status_code=400)
+    if end < start:
+        return Response("End date must be on or after start date.", status_code=400)
+    if (end - start).days > MAX_EXPORT_RANGE_DAYS:
+        return Response(f"Date range cannot exceed {MAX_EXPORT_RANGE_DAYS} days.", status_code=400)
 
     start_dt, _ = day_range(start)
     _, end_dt = day_range(end)
@@ -1026,12 +1469,35 @@ def export_download(
 
 @app.get("/parameters", response_class=HTMLResponse)
 def parameters_page(request: Request, db: Session = Depends(get_db)):
-    user = require_user(request, db)
+    user = require_admin(request, db)
     if isinstance(user, RedirectResponse):
         return user
-    if user.role != RoleEnum.ADMIN:
-        return RedirectResponse(url="/dashboard", status_code=303)
     return templates.TemplateResponse("parameters.html", parameters_page_context(request, user, db))
+
+
+@app.post("/parameters/variables/goal")
+def parameters_update_goal(
+    request: Request,
+    daily_checkout_goal: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    user = require_admin(request, db)
+    if isinstance(user, RedirectResponse):
+        return user
+
+    candidate = (daily_checkout_goal or "").strip()
+    if not candidate:
+        set_flash(request, "error", "Goal is required.")
+        return RedirectResponse(url="/parameters", status_code=303)
+    if not candidate.isdigit():
+        set_flash(request, "error", "Goal must contain numbers only.")
+        return RedirectResponse(url="/parameters", status_code=303)
+
+    set_daily_checkout_goal(db, int(candidate))
+    log_admin_action(db, user, "update_daily_checkout_goal", f"Set daily checkout goal to {int(candidate)}.")
+    db.commit()
+    set_flash(request, "success", "Daily checkout goal updated.")
+    return RedirectResponse(url="/parameters", status_code=303)
 
 
 @app.post("/parameters/users")
@@ -1042,15 +1508,16 @@ def parameters_create_user(
     password: str = Form(...),
     db: Session = Depends(get_db),
 ):
-    user = require_user(request, db)
+    user = require_admin(request, db)
     if isinstance(user, RedirectResponse):
         return user
-    if user.role != RoleEnum.ADMIN:
-        return RedirectResponse(url="/dashboard", status_code=303)
 
     candidate = username.strip()
     if not candidate:
         set_flash(request, "error", "Username is required.")
+        return RedirectResponse(url="/parameters", status_code=303)
+    if len(candidate) > MAX_USERNAME_LENGTH:
+        set_flash(request, "error", f"Username must be {MAX_USERNAME_LENGTH} characters or fewer.")
         return RedirectResponse(url="/parameters", status_code=303)
     if len(password) < MIN_PASSWORD_LENGTH:
         set_flash(request, "error", f"Password must be at least {MIN_PASSWORD_LENGTH} characters.")
@@ -1062,7 +1529,16 @@ def parameters_create_user(
         set_flash(request, "error", "That username already exists.")
         return RedirectResponse(url="/parameters", status_code=303)
 
-    db.add(User(username=candidate, password_hash=hash_password(password), role=role, is_active=True))
+    db.add(
+        User(
+            username=candidate,
+            password_hash=hash_password(password),
+            role=role,
+            is_active=True,
+            must_change_password=True,
+        )
+    )
+    log_admin_action(db, user, "create_user", f"Created user {candidate} with role {role.value}.")
     db.commit()
     set_flash(request, "success", f"User {candidate} created.")
     return RedirectResponse(url="/parameters", status_code=303)
@@ -1075,11 +1551,9 @@ def parameters_reset_password(
     new_password: str = Form(...),
     db: Session = Depends(get_db),
 ):
-    user = require_user(request, db)
+    user = require_admin(request, db)
     if isinstance(user, RedirectResponse):
         return user
-    if user.role != RoleEnum.ADMIN:
-        return RedirectResponse(url="/dashboard", status_code=303)
 
     target_user = db.query(User).filter(User.id == user_id).first()
     if not target_user:
@@ -1093,9 +1567,35 @@ def parameters_reset_password(
         return RedirectResponse(url="/parameters", status_code=303)
 
     target_user.password_hash = hash_password(new_password)
+    target_user.must_change_password = True
     db.add(target_user)
+    log_admin_action(db, user, "reset_user_password", f"Reset password for {target_user.username}.")
     db.commit()
     set_flash(request, "success", f"Password reset for {target_user.username}.")
+    return RedirectResponse(url="/parameters", status_code=303)
+
+
+@app.post("/parameters/users/{user_id}/role")
+def parameters_update_user_role(
+    request: Request,
+    user_id: int,
+    role: RoleEnum = Form(...),
+    db: Session = Depends(get_db),
+):
+    user = require_admin(request, db)
+    if isinstance(user, RedirectResponse):
+        return user
+
+    target_user = db.query(User).filter(User.id == user_id).first()
+    if not target_user:
+        set_flash(request, "error", "User not found.")
+        return RedirectResponse(url="/parameters", status_code=303)
+
+    target_user.role = role
+    db.add(target_user)
+    log_admin_action(db, user, "update_user_role", f"Updated role for {target_user.username} to {role.value}.")
+    db.commit()
+    set_flash(request, "success", f"Role updated for {target_user.username}.")
     return RedirectResponse(url="/parameters", status_code=303)
 
 
@@ -1106,11 +1606,9 @@ def parameters_update_user_hidden(
     is_hidden: bool = Form(default=False),
     db: Session = Depends(get_db),
 ):
-    user = require_user(request, db)
+    user = require_admin(request, db)
     if isinstance(user, RedirectResponse):
         return user
-    if user.role != RoleEnum.ADMIN:
-        return RedirectResponse(url="/dashboard", status_code=303)
 
     target_user = db.query(User).filter(User.id == user_id).first()
     if not target_user:
@@ -1119,6 +1617,7 @@ def parameters_update_user_hidden(
 
     target_user.is_hidden = is_hidden
     db.add(target_user)
+    log_admin_action(db, user, "update_user_hidden", f"Set hidden={is_hidden} for {target_user.username}.")
     db.commit()
     set_flash(request, "success", f"Hidden updated for {target_user.username}.")
     return RedirectResponse(url="/parameters", status_code=303)
@@ -1131,21 +1630,23 @@ def parameters_add_location(
     is_hidden: bool = Form(default=False),
     db: Session = Depends(get_db),
 ):
-    user = require_user(request, db)
+    user = require_admin(request, db)
     if isinstance(user, RedirectResponse):
         return user
-    if user.role != RoleEnum.ADMIN:
-        return RedirectResponse(url="/dashboard", status_code=303)
 
     candidate = name.strip()
     if not candidate:
         set_flash(request, "error", "Location name is required.")
+        return RedirectResponse(url="/parameters", status_code=303)
+    if len(candidate) > MAX_LOCATION_NAME_LENGTH:
+        set_flash(request, "error", f"Location name must be {MAX_LOCATION_NAME_LENGTH} characters or fewer.")
         return RedirectResponse(url="/parameters", status_code=303)
     if db.query(Location).filter(Location.name == candidate).first():
         set_flash(request, "error", "That location already exists.")
         return RedirectResponse(url="/parameters", status_code=303)
 
     db.add(Location(name=candidate, is_hidden=is_hidden))
+    log_admin_action(db, user, "add_location", f"Added location {candidate} (hidden={is_hidden}).")
     db.commit()
     set_flash(request, "success", f"Location {candidate} added.")
     return RedirectResponse(url="/parameters", status_code=303)
@@ -1158,11 +1659,9 @@ def parameters_update_location(
     name: str = Form(...),
     db: Session = Depends(get_db),
 ):
-    user = require_user(request, db)
+    user = require_admin(request, db)
     if isinstance(user, RedirectResponse):
         return user
-    if user.role != RoleEnum.ADMIN:
-        return RedirectResponse(url="/dashboard", status_code=303)
 
     location = db.query(Location).filter(Location.id == location_id).first()
     candidate = name.strip()
@@ -1172,12 +1671,16 @@ def parameters_update_location(
     if not candidate:
         set_flash(request, "error", "Location name is required.")
         return RedirectResponse(url="/parameters", status_code=303)
+    if len(candidate) > MAX_LOCATION_NAME_LENGTH:
+        set_flash(request, "error", f"Location name must be {MAX_LOCATION_NAME_LENGTH} characters or fewer.")
+        return RedirectResponse(url="/parameters", status_code=303)
     if db.query(Location).filter(Location.name == candidate, Location.id != location_id).first():
         set_flash(request, "error", "That location name is already in use.")
         return RedirectResponse(url="/parameters", status_code=303)
 
     location.name = candidate
     db.add(location)
+    log_admin_action(db, user, "update_location", f"Updated location #{location.id} to {candidate}.")
     db.commit()
     set_flash(request, "success", "Location updated.")
     return RedirectResponse(url="/parameters", status_code=303)
@@ -1190,11 +1693,9 @@ def parameters_update_location_hidden(
     is_hidden: bool = Form(default=False),
     db: Session = Depends(get_db),
 ):
-    user = require_user(request, db)
+    user = require_admin(request, db)
     if isinstance(user, RedirectResponse):
         return user
-    if user.role != RoleEnum.ADMIN:
-        return RedirectResponse(url="/dashboard", status_code=303)
 
     location = db.query(Location).filter(Location.id == location_id).first()
     if not location:
@@ -1203,6 +1704,7 @@ def parameters_update_location_hidden(
 
     location.is_hidden = is_hidden
     db.add(location)
+    log_admin_action(db, user, "update_location_hidden", f"Set hidden={is_hidden} for location #{location.id}.")
     db.commit()
     set_flash(request, "success", "Location hidden state updated.")
     return RedirectResponse(url="/parameters", status_code=303)
@@ -1215,21 +1717,23 @@ def parameters_add_provider(
     is_hidden: bool = Form(default=False),
     db: Session = Depends(get_db),
 ):
-    user = require_user(request, db)
+    user = require_admin(request, db)
     if isinstance(user, RedirectResponse):
         return user
-    if user.role != RoleEnum.ADMIN:
-        return RedirectResponse(url="/dashboard", status_code=303)
 
     candidate = name.strip()
     if not candidate:
         set_flash(request, "error", "Provider name is required.")
+        return RedirectResponse(url="/parameters", status_code=303)
+    if len(candidate) > MAX_PROVIDER_NAME_LENGTH:
+        set_flash(request, "error", f"Provider name must be {MAX_PROVIDER_NAME_LENGTH} characters or fewer.")
         return RedirectResponse(url="/parameters", status_code=303)
     if db.query(Provider).filter(Provider.name == candidate).first():
         set_flash(request, "error", "That provider already exists.")
         return RedirectResponse(url="/parameters", status_code=303)
 
     db.add(Provider(name=candidate, is_hidden=is_hidden))
+    log_admin_action(db, user, "add_provider", f"Added provider {candidate} (hidden={is_hidden}).")
     db.commit()
     set_flash(request, "success", f"Provider {candidate} added.")
     return RedirectResponse(url="/parameters", status_code=303)
@@ -1242,11 +1746,9 @@ def parameters_update_provider(
     name: str = Form(...),
     db: Session = Depends(get_db),
 ):
-    user = require_user(request, db)
+    user = require_admin(request, db)
     if isinstance(user, RedirectResponse):
         return user
-    if user.role != RoleEnum.ADMIN:
-        return RedirectResponse(url="/dashboard", status_code=303)
 
     provider = db.query(Provider).filter(Provider.id == provider_id).first()
     candidate = name.strip()
@@ -1256,12 +1758,16 @@ def parameters_update_provider(
     if not candidate:
         set_flash(request, "error", "Provider name is required.")
         return RedirectResponse(url="/parameters", status_code=303)
+    if len(candidate) > MAX_PROVIDER_NAME_LENGTH:
+        set_flash(request, "error", f"Provider name must be {MAX_PROVIDER_NAME_LENGTH} characters or fewer.")
+        return RedirectResponse(url="/parameters", status_code=303)
     if db.query(Provider).filter(Provider.name == candidate, Provider.id != provider_id).first():
         set_flash(request, "error", "That provider name is already in use.")
         return RedirectResponse(url="/parameters", status_code=303)
 
     provider.name = candidate
     db.add(provider)
+    log_admin_action(db, user, "update_provider", f"Updated provider #{provider.id} to {candidate}.")
     db.commit()
     set_flash(request, "success", "Provider updated.")
     return RedirectResponse(url="/parameters", status_code=303)
@@ -1274,11 +1780,9 @@ def parameters_update_provider_hidden(
     is_hidden: bool = Form(default=False),
     db: Session = Depends(get_db),
 ):
-    user = require_user(request, db)
+    user = require_admin(request, db)
     if isinstance(user, RedirectResponse):
         return user
-    if user.role != RoleEnum.ADMIN:
-        return RedirectResponse(url="/dashboard", status_code=303)
 
     provider = db.query(Provider).filter(Provider.id == provider_id).first()
     if not provider:
@@ -1287,6 +1791,7 @@ def parameters_update_provider_hidden(
 
     provider.is_hidden = is_hidden
     db.add(provider)
+    log_admin_action(db, user, "update_provider_hidden", f"Set hidden={is_hidden} for provider #{provider.id}.")
     db.commit()
     set_flash(request, "success", "Provider hidden state updated.")
     return RedirectResponse(url="/parameters", status_code=303)

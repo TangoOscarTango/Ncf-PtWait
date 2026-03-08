@@ -10,7 +10,7 @@ from openpyxl.styles import Font
 from sqlalchemy import update
 from sqlalchemy.orm import Session
 
-from app.models import AuditLog, RoleEnum, User, Visit
+from app.models import AdminActionLog, AuditLog, RoleEnum, User, Visit
 
 TIME_FIELDS = [
     "arrived_at",
@@ -68,6 +68,9 @@ ROLE_ACTIONS = {
 }
 
 OTHER_SLOT_ORDER = ["Lab", "Ultrasound", "X-Ray", "Other 1", "Other 2"]
+MAX_OTHER_DESTINATION_LENGTH = 120
+MAX_NOTE_LENGTH = 500
+MAX_OVERRIDE_REASON_LENGTH = 500
 
 
 class ValidationError(Exception):
@@ -185,11 +188,16 @@ def _other_logs(entries: list[dict]) -> tuple[str | None, str | None]:
         end_note = entry.get("end_note")
         if slot and begin_at:
             line = f"{begin_at} - {slot}"
-            if begin_note:
+            begin_note_text = str(begin_note or "").strip()
+            slot_text = str(slot).strip()
+            if begin_note_text and begin_note_text.lower() != slot_text.lower():
                 line = f"{line} ({begin_note})"
             begin_lines.append(line)
         if slot and end_at:
+            begin_note_text = str(begin_note or "").strip()
             line = f"{end_at} - {slot}"
+            if begin_note_text:
+                line = f"{line} - {begin_note_text}"
             if end_note:
                 line = f"{line} ({end_note})"
             end_lines.append(line)
@@ -253,6 +261,8 @@ def set_timestamp(
     timestamp_label = now_value.strftime("%Y-%m-%d %H:%M:%S")
     existing_note = getattr(visit, DELAY_NOTE_FIELDS[field_name])
     new_note = delay_note.strip() if delay_note and delay_note.strip() else None
+    if new_note and len(new_note) > MAX_NOTE_LENGTH:
+        raise ValidationError(f"Notes must be {MAX_NOTE_LENGTH} characters or fewer.")
     tracking_entries = _parse_other_tracking(visit)
     tracking_changed = False
     if field_name == "other_begin_at":
@@ -263,6 +273,10 @@ def set_timestamp(
         typed_destination = (other_destination or "").strip()
         if selected_type == "OTHER" and not typed_destination:
             raise ValidationError("When OTHER is selected, enter where the patient was sent.")
+        if typed_destination and len(typed_destination) > MAX_OTHER_DESTINATION_LENGTH:
+            raise ValidationError(
+                f"Other destination must be {MAX_OTHER_DESTINATION_LENGTH} characters or fewer."
+            )
         if len(tracking_entries) >= 5:
             raise ValidationError("Maximum of 5 Other Begin timestamps reached for this visit.")
 
@@ -370,6 +384,16 @@ def set_timestamp(
             raise ValidationError("This step was already recorded by another user. The queue has been refreshed.")
         raise ValidationError("This visit changed before your save completed. The queue has been refreshed.")
 
+    if field_name == "checkout_at":
+        today_label = now_value.date().isoformat()
+        acting_user.coins = (acting_user.coins or 0) + 1
+        if acting_user.daily_checkout_date == today_label:
+            acting_user.daily_checkout_count = (acting_user.daily_checkout_count or 0) + 1
+        else:
+            acting_user.daily_checkout_date = today_label
+            acting_user.daily_checkout_count = 1
+        db.add(acting_user)
+
     db.commit()
     db.refresh(visit)
 
@@ -388,6 +412,8 @@ def override_timestamp(
         raise ValidationError("Invalid timestamp field.")
     if not reason.strip():
         raise ValidationError("Reason is required.")
+    if len(reason.strip()) > MAX_OVERRIDE_REASON_LENGTH:
+        raise ValidationError(f"Reason must be {MAX_OVERRIDE_REASON_LENGTH} characters or fewer.")
 
     old_value = getattr(visit, field_name)
     setattr(visit, field_name, new_value)
@@ -428,11 +454,19 @@ def build_export(
 
     headers = [
         "MRN",
+        "Visit Created At",
+        "Visit Type",
         "Location",
         "Provider",
-        "Visit Type",
-        "Arrived At",
         "Arrived Recorded By",
+        "Total Visit Minutes",
+        "Provider Wait Minutes",
+        "Waiting Room Minutes",
+        "Registration Minutes",
+        "Provider Duration Minutes",
+        "Other Duration Minutes",
+        "Lab Duration Minutes",
+        "Arrived At",
         "Arrived Delay Reason",
         "Ready for Clinical At",
         "Ready for Clinical Delay Reason",
@@ -443,15 +477,12 @@ def build_export(
         "Provider In At",
         "Provider In Delay Reason",
         "Lab Begin At",
-        "Lab Begin Note",
         "Lab End At",
         "Lab End Note",
         "Ultrasound Begin At",
-        "Ultrasound Begin Note",
         "Ultrasound End At",
         "Ultrasound End Note",
         "X-Ray Begin At",
-        "X-Ray Begin Note",
         "X-Ray End At",
         "X-Ray End Note",
         "Other 1 Begin At",
@@ -470,13 +501,6 @@ def build_export(
         "Lab Complete Delay Reason",
         "Checkout At",
         "Checkout Delay Reason",
-        "Registration Minutes",
-        "Waiting Room Minutes",
-        "Provider Wait Minutes",
-        "Provider Duration Minutes",
-        "Other Duration Minutes",
-        "Lab Duration Minutes",
-        "Total Visit Minutes",
     ]
     ws.append(headers)
     ws.freeze_panes = "A2"
@@ -492,11 +516,19 @@ def build_export(
         ws.append(
             [
                 visit.mrn,
+                format_dt(visit.created_at),
+                visit.visit_type,
                 visit.location.name,
                 visit.provider.name,
-                visit.visit_type,
-                format_dt(visit.arrived_at),
                 visit.created_by_user.username if visit.created_by_user else "",
+                minutes_between(visit.arrived_at, visit.checkout_at),
+                minutes_between(visit.intake_complete_at, visit.provider_in_at),
+                minutes_between(visit.ready_for_clinical_at, visit.intake_complete_at),
+                minutes_between(visit.arrived_at, visit.ready_for_clinical_at),
+                minutes_between(visit.provider_in_at, visit.provider_out_at),
+                other_duration_minutes(visit),
+                lab_duration_minutes(visit),
+                format_dt(visit.arrived_at),
                 visit.arrived_delay_note,
                 format_dt(visit.ready_for_clinical_at),
                 visit.ready_for_clinical_delay_note,
@@ -507,15 +539,12 @@ def build_export(
                 format_dt(visit.provider_in_at),
                 visit.provider_in_delay_note,
                 slot_values.get("Lab", {}).get("begin_at"),
-                slot_values.get("Lab", {}).get("begin_note"),
                 slot_values.get("Lab", {}).get("end_at"),
                 slot_values.get("Lab", {}).get("end_note"),
                 slot_values.get("Ultrasound", {}).get("begin_at"),
-                slot_values.get("Ultrasound", {}).get("begin_note"),
                 slot_values.get("Ultrasound", {}).get("end_at"),
                 slot_values.get("Ultrasound", {}).get("end_note"),
                 slot_values.get("X-Ray", {}).get("begin_at"),
-                slot_values.get("X-Ray", {}).get("begin_note"),
                 slot_values.get("X-Ray", {}).get("end_at"),
                 slot_values.get("X-Ray", {}).get("end_note"),
                 slot_values.get("Other 1", {}).get("begin_at"),
@@ -534,13 +563,6 @@ def build_export(
                 visit.lab_complete_delay_note,
                 format_dt(visit.checkout_at),
                 visit.checkout_delay_note,
-                minutes_between(visit.arrived_at, visit.ready_for_clinical_at),
-                minutes_between(visit.ready_for_clinical_at, visit.intake_complete_at),
-                minutes_between(visit.intake_complete_at, visit.provider_in_at),
-                minutes_between(visit.provider_in_at, visit.provider_out_at),
-                other_duration_minutes(visit),
-                lab_duration_minutes(visit),
-                minutes_between(visit.arrived_at, visit.checkout_at),
             ]
         )
 
@@ -574,6 +596,58 @@ def build_audit_export(audit_rows: list[AuditLog], field_labels: dict[str, str])
                 row.old_value or "",
                 row.new_value or "",
                 row.reason,
+            ]
+        )
+
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    return bio.read()
+
+
+def build_logs_export(
+    visit_audit_rows: list[AuditLog],
+    system_audit_rows: list[AdminActionLog],
+    field_labels: dict[str, str],
+) -> bytes:
+    wb = Workbook()
+    ws_visit = wb.active
+    ws_visit.title = "VisitAuditLog"
+    visit_headers = ["Visit ID", "Changed At", "User", "Field", "Old", "New", "Reason"]
+    ws_visit.append(visit_headers)
+    ws_visit.freeze_panes = "A2"
+    for cell in ws_visit[1]:
+        cell.font = Font(bold=True)
+    for column_index in range(1, len(visit_headers) + 1):
+        ws_visit.column_dimensions[get_column_letter(column_index)].width = 24.0
+    for row in visit_audit_rows:
+        ws_visit.append(
+            [
+                row.visit_id,
+                format_dt(row.changed_at),
+                row.changed_by_user.username if row.changed_by_user else "",
+                field_labels.get(row.field_name, row.field_name),
+                row.old_value or "",
+                row.new_value or "",
+                row.reason,
+            ]
+        )
+
+    ws_system = wb.create_sheet("SystemAuditLog")
+    system_headers = ["Performed At", "User", "Action", "Details"]
+    ws_system.append(system_headers)
+    ws_system.freeze_panes = "A2"
+    for cell in ws_system[1]:
+        cell.font = Font(bold=True)
+    for column_index in range(1, len(system_headers) + 1):
+        ws_system.column_dimensions[get_column_letter(column_index)].width = 30.0
+    for row in system_audit_rows:
+        ws_system.append(
+            [
+                format_dt(row.performed_at),
+                row.performed_by_user.username if row.performed_by_user else "",
+                row.action_name,
+                row.details,
             ]
         )
 

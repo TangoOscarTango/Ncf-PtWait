@@ -53,6 +53,7 @@ def seed_initial_data(db: Session) -> None:
                     password_hash=hash_password(password),
                     role=role,
                     is_active=True,
+                    must_change_password=True,
                 )
             )
         changed = True

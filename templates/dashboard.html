@@ -28,7 +28,7 @@
       <input type="date" name="visit_date" id="filter-visit-date" value="{{ selected_date }}" />
     </label>
     <label>Search
-      <input type="text" name="search" id="filter-search" value="{{ search }}" placeholder="MRN, note, or provider" />
+      <input type="text" name="search" id="filter-search" value="{{ search }}" placeholder="MRN, note, or provider" maxlength="200" />
     </label>
     <label>
       <input type="checkbox" name="hide_complete" id="filter-hide-complete" value="true" {% if hide_complete %}checked{% endif %} />
@@ -46,7 +46,7 @@
 <section class="panel">
   <h2>New Visit</h2>
   <form method="post" action="visits" class="inline-form">
-    <label>MRN <input type="text" name="mrn" required /></label>
+    <label>MRN <input type="text" name="mrn" inputmode="numeric" pattern="[0-9]*" oninput="this.value=this.value.replace(/[^0-9]/g,'')" maxlength="32" required /></label>
     <label>Visit Type
       <select name="visit_type" required>
         <option value="" disabled selected>Select Type</option>
@@ -244,7 +244,7 @@
                 <input type="hidden" name="visit_date" value="{{ selected_date }}" />
                 <input type="hidden" name="search" value="{{ search }}" />
                 <input type="hidden" name="hide_complete" value="{{ 'true' if hide_complete else 'false' }}" />
-                <input type="text" name="delay_note" placeholder="Delay reason" />
+                <input type="text" name="delay_note" placeholder="Delay reason" maxlength="500" />
                 <button type="submit" {% if not row.next_enabled %}disabled{% endif %}>{{ row.next_label }}</button>
               </form>
               {% if row.alt_action_field %}
@@ -261,7 +261,7 @@
                 <input type="hidden" name="visit_date" value="{{ selected_date }}" />
                 <input type="hidden" name="search" value="{{ search }}" />
                 <input type="hidden" name="hide_complete" value="{{ 'true' if hide_complete else 'false' }}" />
-                <input type="text" name="delay_note" placeholder="Delay reason" />
+                <input type="text" name="delay_note" placeholder="Delay reason" maxlength="500" />
                 <button type="submit">{{ row.alt_action_label }}</button>
               </form>
               {% endif %}
@@ -284,7 +284,7 @@
                     <option value="{{ option.value }}">{{ option.label }}</option>
                   {% endfor %}
                 </select>
-                <input type="text" name="other_destination" class="other-destination-input" placeholder="Pt sent where?" style="display: none;" />
+                <input type="text" name="other_destination" class="other-destination-input" placeholder="Pt sent where?" maxlength="120" style="display: none;" />
                 <button type="submit" style="background-color: #1b7f2a; color: #ffffff;">Other Begin (Optional)</button>
               </form>
               {% endif %}
@@ -307,7 +307,7 @@
                     <option value="{{ slot.value }}">{{ slot.label }}</option>
                   {% endfor %}
                 </select>
-                <input type="text" name="delay_note" placeholder="Notes go here" />
+                <input type="text" name="delay_note" placeholder="Notes go here" maxlength="500" />
                 <button type="submit" style="background-color: #c92a2a; color: #ffffff;">Other End (Optional)</button>
               </form>
               {% endif %}
@@ -338,6 +338,9 @@
     const openLocationButton = document.getElementById("open-location-picker");
     const openProviderButton = document.getElementById("open-provider-picker");
     const flashData = {{ flash | tojson }};
+    const fancyEffectsDisabled = {{ 'true' if current_user.disable_fancy_effects else 'false' }};
+    const checkoutGoalRemaining = {{ checkout_goal_remaining }};
+    const checkoutVisitsLoggedToday = {{ checkout_visits_logged_today }};
     const userId = {{ current_user.id }};
     let activePickerWindow = null;
     const locationOptions = {{ location_picker_options | tojson }};
@@ -570,14 +573,60 @@
       });
     }
 
+    function showCheckoutGoalText() {
+      let message = "";
+      if (checkoutGoalRemaining > 0) {
+        message = `${checkoutGoalRemaining} TO GO!`;
+      } else if (checkoutGoalRemaining === 0) {
+        message = "DAILY GOAL MET! WAY TO GO!";
+      } else {
+        message = `GOAL ALREADY MET - ${checkoutVisitsLoggedToday} VISITS LOGGED TODAY`;
+      }
+      const colors = ["rgba(255, 215, 0, 0.75)", "rgba(250, 128, 114, 0.75)", "rgba(0, 0, 255, 0.75)"];
+      const centerX = Math.round(window.innerWidth * 0.5);
+      const header = document.querySelector(".top-nav");
+      const headerBottom = header ? Math.round(header.getBoundingClientRect().bottom) : 0;
+      const preferredY = Math.round(window.innerHeight * 0.16);
+      const centerY = Math.max(preferredY, headerBottom + 36);
+      const label = document.createElement("div");
+      label.style.position = "fixed";
+      label.style.left = `${centerX}px`;
+      label.style.top = `${centerY}px`;
+      label.style.transform = "translate(-50%, -50%)";
+      label.style.fontSize = "34px";
+      label.style.fontWeight = "700";
+      label.style.letterSpacing = "0.3px";
+      label.style.textAlign = "center";
+      label.style.maxWidth = "92vw";
+      label.style.whiteSpace = "normal";
+      label.style.lineHeight = "1.1";
+      label.style.pointerEvents = "none";
+      label.style.userSelect = "none";
+      label.style.zIndex = "1600";
+      label.style.opacity = "1";
+      label.style.transition = "opacity 240ms ease-out";
+      for (let i = 0; i < message.length; i += 1) {
+        const span = document.createElement("span");
+        span.textContent = message[i];
+        span.style.color = colors[i % colors.length];
+        label.appendChild(span);
+      }
+      document.body.appendChild(label);
+      window.setTimeout(() => {
+        label.style.opacity = "0";
+      }, 2750);
+      window.setTimeout(() => label.remove(), 3000);
+    }
+
     const firstLoginKey = `cct-first-login-${userId}`;
-    if (!window.localStorage.getItem(firstLoginKey)) {
+    if (!fancyEffectsDisabled && !window.localStorage.getItem(firstLoginKey)) {
       runConfetti();
       window.localStorage.setItem(firstLoginKey, "1");
     }
 
-    if (flashData && flashData.level === "success" && typeof flashData.message === "string" && flashData.message.includes("Checkout recorded")) {
+    if (!fancyEffectsDisabled && flashData && flashData.level === "success" && typeof flashData.message === "string" && flashData.message.includes("Checkout recorded")) {
       runFirework();
+      showCheckoutGoalText();
     }
 
     visitDateInput.addEventListener("change", () => form.requestSubmit());

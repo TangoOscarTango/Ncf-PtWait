@@ -6,17 +6,27 @@
 </section>
 
 <section class="panel">
+  <h2>Variables</h2>
+  <form method="post" action="parameters/variables/goal" class="inline-form">
+    <label>Daily Checkout Goal
+      <input type="text" name="daily_checkout_goal" value="{{ daily_checkout_goal }}" inputmode="numeric" pattern="[0-9]*" oninput="this.value=this.value.replace(/[^0-9]/g,'')" required />
+    </label>
+    <button type="submit">Save Variable</button>
+  </form>
+</section>
+
+<section class="panel">
   <h2>Create User</h2>
   <form method="post" action="parameters/users" class="inline-form">
     <label>Username
-      <input type="text" name="username" required />
+      <input type="text" name="username" maxlength="64" required />
     </label>
     <label>Role
       <select name="role" required>
+        <option value="auditor" selected>Auditor</option>
+        <option value="admin">Admin</option>
         <option value="fd">Front Desk</option>
         <option value="nurse">Nurse</option>
-        <option value="auditor">Auditor</option>
-        <option value="admin">Admin</option>
       </select>
     </label>
     <label>Temporary Password
@@ -32,7 +42,7 @@
     <thead>
       <tr>
         <th>Username</th>
-        <th>Role</th>
+        <th>Role / Coins</th>
         <th>Update</th>
       </tr>
     </thead>
@@ -40,9 +50,18 @@
       {% for user in users %}
       <tr>
         <td>{{ user.username }}</td>
-        <td>{{ role_label(user.role) }}</td>
+        <td>{{ role_label(user.role) }} / <span class="coin-label">{{ user.coins }} Coins</span></td>
         <td>
           <div class="user-update-row">
+            <form method="post" action="parameters/users/{{ user.id }}/role" class="mini-form">
+              <select name="role" required>
+                <option value="admin" {% if user.role.value == 'admin' %}selected{% endif %}>Admin</option>
+                <option value="auditor" {% if user.role.value == 'auditor' %}selected{% endif %}>Auditor</option>
+                <option value="fd" {% if user.role.value == 'fd' %}selected{% endif %}>Front Desk</option>
+                <option value="nurse" {% if user.role.value == 'nurse' %}selected{% endif %}>Nurse</option>
+              </select>
+              <button type="submit">Role</button>
+            </form>
             <div class="hidden-toggle-stack">
               <div class="hidden-toggle-label">Hidden</div>
               <form method="post" action="parameters/users/{{ user.id }}/hidden" class="mini-form">
@@ -65,7 +84,7 @@
   <h2>Locations</h2>
   <form method="post" action="parameters/locations" class="inline-form">
     <label>New Location
-      <input type="text" name="name" required />
+      <input type="text" name="name" maxlength="120" required />
     </label>
     <label class="inline-check">
       <input type="checkbox" name="is_hidden" value="true" />
@@ -92,7 +111,7 @@
           <details>
             <summary>Edit</summary>
             <form method="post" action="parameters/locations/{{ location.id }}" class="mini-form">
-              <input type="text" name="name" value="{{ location.name }}" required />
+              <input type="text" name="name" value="{{ location.name }}" maxlength="120" required />
               <button type="submit">Save</button>
             </form>
           </details>
@@ -107,7 +126,7 @@
   <h2>Providers</h2>
   <form method="post" action="parameters/providers" class="inline-form">
     <label>New Provider
-      <input type="text" name="name" required />
+      <input type="text" name="name" maxlength="120" required />
     </label>
     <label class="inline-check">
       <input type="checkbox" name="is_hidden" value="true" />
@@ -134,7 +153,7 @@
           <details>
             <summary>Edit</summary>
             <form method="post" action="parameters/providers/{{ provider.id }}" class="mini-form">
-              <input type="text" name="name" value="{{ provider.name }}" required />
+              <input type="text" name="name" value="{{ provider.name }}" maxlength="120" required />
               <button type="submit">Save</button>
             </form>
           </details>

@@ -33,28 +33,110 @@
     {% endif %}
     {% block content %}{% endblock %}
   </main>
-  <div class="app-version">v1.939659 -BLM</div>
+  <div class="app-version">v1.939783 -BLM</div>
   <script>
     (() => {
+      const fancyEffectsDisabled = {% if current_user %}{{ 'true' if current_user.disable_fancy_effects else 'false' }}{% else %}false{% endif %};
+      const logo = document.querySelector(".brand-logo");
+      if (!logo || fancyEffectsDisabled) {
+        return;
+      }
+      const MAX_DEG = 23.4375;
+
+      logo.addEventListener("mousemove", (event) => {
+        const rect = logo.getBoundingClientRect();
+        const centerX = rect.left + (rect.width / 2);
+        const centerY = rect.top + (rect.height / 2);
+        const relativeX = (event.clientX - centerX) / (rect.width / 2);
+        const relativeY = (event.clientY - centerY) / (rect.height / 2);
+        const clamped = Math.max(-1, Math.min(1, relativeX));
+        const clampedY = Math.max(-1, Math.min(1, relativeY));
+        const rotateY = clamped * MAX_DEG;
+        const rotateX = -clampedY * MAX_DEG;
+        logo.style.transform = `perspective(700px) rotateX(${rotateX}deg) rotateY(${rotateY}deg)`;
+      });
+
+      logo.addEventListener("mouseleave", () => {
+        logo.style.transform = "perspective(700px) rotateX(0deg) rotateY(0deg)";
+      });
+
+      logo.addEventListener("click", (event) => {
+        window.dispatchEvent(
+          new CustomEvent("logo-star-burst", {
+            detail: {
+              x: event.clientX,
+              y: event.clientY,
+            },
+          })
+        );
+      });
+    })();
+  </script>
+  <script>
+    (() => {
+      const fancyEffectsDisabled = {% if current_user %}{{ 'true' if current_user.disable_fancy_effects else 'false' }}{% else %}false{% endif %};
       const canvas = document.getElementById("star-background");
       if (!canvas) {
+        return;
+      }
+      if (fancyEffectsDisabled) {
+        canvas.style.display = "none";
         return;
       }
       const context = canvas.getContext("2d", { alpha: true });
       if (!context) {
         return;
       }
-      const STAR_COUNT = 15;
-      const COLORS = ["#FFD700", "#FA8072", "#000000"];
-      const LOGO_SPAWN_CHANCE = 0.01;
+      const STAR_COUNT = 30;
+      const COLORS = ["#FFD700", "#FA8072", "#666666"];
+      const LOGO_ALPHA = 0.25;
+      const LOGO_MIN_INTERVAL_MS = 55 * 60 * 1000;
+      const LOGO_MAX_INTERVAL_MS = 65 * 60 * 1000;
+      const LOGO_STORAGE_KEY = "pct-next-logo-spawn-ms";
+      const LOGO_SCALE = 0.25;
       const stars = [];
+      const burstParticles = [];
       let width = window.innerWidth;
       let height = window.innerHeight;
+      let headerBottom = 0;
       const logoImage = new Image();
       logoImage.src = "static/ncfm-new-logo-alpha.png";
+      let nextLogoSpawnMs = 0;
 
       function random(min, max) {
         return min + Math.random() * (max - min);
+      }
+
+      function scheduleNextLogoSpawn(nowMs) {
+        const next = nowMs + Math.floor(random(LOGO_MIN_INTERVAL_MS, LOGO_MAX_INTERVAL_MS));
+        try {
+          window.localStorage.setItem(LOGO_STORAGE_KEY, String(next));
+        } catch (_) {
+          // Ignore localStorage failures and keep in-memory scheduling.
+        }
+        return next;
+      }
+
+      function initializeNextLogoSpawn() {
+        try {
+          const raw = window.localStorage.getItem(LOGO_STORAGE_KEY);
+          const parsed = raw ? Number(raw) : NaN;
+          if (Number.isFinite(parsed) && parsed > Date.now()) {
+            return parsed;
+          }
+        } catch (_) {
+          // Ignore localStorage failures and keep in-memory scheduling.
+        }
+        return scheduleNextLogoSpawn(Date.now());
+      }
+
+      function shouldSpawnLogo() {
+        const nowMs = Date.now();
+        if (nowMs < nextLogoSpawnMs) {
+          return false;
+        }
+        nextLogoSpawnMs = scheduleNextLogoSpawn(nowMs);
+        return true;
       }
 
       function randomVelocity() {
@@ -62,41 +144,90 @@
         return Math.random() < 0.5 ? -speed : speed;
       }
 
+      function hexToRgb(hex) {
+        const clean = hex.replace("#", "");
+        const value = parseInt(clean, 16);
+        return {
+          r: (value >> 16) & 255,
+          g: (value >> 8) & 255,
+          b: value & 255,
+        };
+      }
+
+      function pickColor() {
+        return COLORS[Math.floor(Math.random() * COLORS.length)];
+      }
+
+      function pickBaseAlpha(color) {
+        if (color === "#666666") {
+          return random(0.05, 0.12);
+        }
+        return random(0.1, 0.3);
+      }
+
+      function pickSize() {
+        if (Math.random() < 0.3) {
+          return random(1.4, 2.2);
+        }
+        return random(2.2, 6.0);
+      }
+
+      function diamondPath(x, y, radius) {
+        context.beginPath();
+        context.moveTo(x, y - radius);
+        context.lineTo(x + radius, y);
+        context.lineTo(x, y + radius);
+        context.lineTo(x - radius, y);
+        context.closePath();
+      }
+
       function createStar(x, y) {
-        const isLogo = Math.random() < LOGO_SPAWN_CHANCE;
+        const isLogo = shouldSpawnLogo();
+        const lifespanMs = Math.floor(random(10000, 30000));
+        const color = pickColor();
         return {
           x,
           y,
-          size: random(2, 5),
+          size: pickSize(),
           vx: randomVelocity(),
           vy: randomVelocity(),
-          color: COLORS[Math.floor(Math.random() * COLORS.length)],
-          alpha: random(0.1, 0.3),
+          color,
+          colorRgb: hexToRgb(color),
+          alpha: pickBaseAlpha(color),
           isLogo,
+          createdAt: performance.now(),
+          lifespanMs,
+        };
+      }
+
+      function createBurstParticle(x, y, color, angle) {
+        const speed = random(0.65, 1.2);
+        return {
+          x,
+          y,
+          size: random(5.2, 8.4),
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed,
+          color,
+          colorRgb: hexToRgb(color),
+          alpha: color === "#666666" ? 0.0825 : 0.1425,
+          createdAt: performance.now(),
+          lifespanMs: random(500, 2000),
         };
       }
 
       function respawnFromEdge(star) {
-        const edge = Math.floor(Math.random() * 4);
-        if (edge === 0) {
-          star.x = random(0, width);
-          star.y = -star.size;
-        } else if (edge === 1) {
-          star.x = width + star.size;
-          star.y = random(0, height);
-        } else if (edge === 2) {
-          star.x = random(0, width);
-          star.y = height + star.size;
-        } else {
-          star.x = -star.size;
-          star.y = random(0, height);
-        }
-        star.size = random(2, 5);
+        star.x = random(0, width);
+        star.y = random(headerBottom + 4, height);
+        star.size = pickSize();
         star.vx = randomVelocity();
         star.vy = randomVelocity();
-        star.color = COLORS[Math.floor(Math.random() * COLORS.length)];
-        star.alpha = random(0.1, 0.3);
-        star.isLogo = Math.random() < LOGO_SPAWN_CHANCE;
+        star.color = pickColor();
+        star.colorRgb = hexToRgb(star.color);
+        star.alpha = pickBaseAlpha(star.color);
+        star.isLogo = shouldSpawnLogo();
+        star.createdAt = performance.now();
+        star.lifespanMs = Math.floor(random(10000, 30000));
       }
 
       function resizeCanvas() {
@@ -104,58 +235,124 @@
         height = window.innerHeight;
         canvas.width = width;
         canvas.height = height;
+        const header = document.querySelector(".top-nav");
+        headerBottom = header ? header.getBoundingClientRect().bottom : 0;
       }
 
-      function drawDiamond(star) {
+      function particleRadius(star) {
+        if (star.isLogo && logoImage.complete && logoImage.naturalWidth > 0 && logoImage.naturalHeight > 0) {
+          const halfWidth = (logoImage.naturalWidth * LOGO_SCALE) / 2;
+          const halfHeight = (logoImage.naturalHeight * LOGO_SCALE) / 2;
+          return Math.max(halfWidth, halfHeight);
+        }
+        return star.size;
+      }
+
+      function drawDiamond(star, alphaScale) {
+        const effectiveAlpha = star.alpha * alphaScale;
         if (star.isLogo && logoImage.complete && logoImage.naturalWidth > 0) {
-          context.globalAlpha = star.alpha;
+          const drawWidth = logoImage.naturalWidth * LOGO_SCALE;
+          const drawHeight = logoImage.naturalHeight * LOGO_SCALE;
+          context.globalAlpha = LOGO_ALPHA;
           context.drawImage(
             logoImage,
-            star.x - star.size,
-            star.y - star.size,
-            star.size * 2,
-            star.size * 2
+            star.x - (drawWidth / 2),
+            star.y - (drawHeight / 2),
+            drawWidth,
+            drawHeight
           );
           return;
         }
-        context.globalAlpha = star.alpha;
-        context.fillStyle = star.color;
-        context.beginPath();
-        context.moveTo(star.x, star.y - star.size);
-        context.lineTo(star.x + star.size, star.y);
-        context.lineTo(star.x, star.y + star.size);
-        context.lineTo(star.x - star.size, star.y);
-        context.closePath();
-        context.fill();
-        context.strokeStyle = "rgba(255, 255, 255, 0.7)";
-        context.lineWidth = 1;
-        context.stroke();
+        const steps = Math.max(1, Math.round(star.size));
+        const denominator = Math.max(1, steps - 1);
+        for (let radius = steps; radius >= 1; radius -= 1) {
+          const fadeToWhite = (radius - 1) / denominator;
+          const r = Math.round(star.colorRgb.r + (255 - star.colorRgb.r) * fadeToWhite);
+          const g = Math.round(star.colorRgb.g + (255 - star.colorRgb.g) * fadeToWhite);
+          const b = Math.round(star.colorRgb.b + (255 - star.colorRgb.b) * fadeToWhite);
+          context.globalAlpha = effectiveAlpha;
+          context.fillStyle = `rgb(${r}, ${g}, ${b})`;
+          diamondPath(star.x, star.y, radius);
+          context.fill();
+        }
       }
 
       function step() {
+        const now = performance.now();
         context.clearRect(0, 0, width, height);
         for (let i = 0; i < stars.length; i += 1) {
           const star = stars[i];
+          const elapsedMs = now - star.createdAt;
+          const lifeProgress = elapsedMs / star.lifespanMs;
+          if (lifeProgress >= 1) {
+            respawnFromEdge(star);
+          }
+          const fadeStart = 0.8;
+          const fadePortion = Math.max(0, (lifeProgress - fadeStart) / (1 - fadeStart));
+          const remaining = 1 - fadePortion;
+          const radius = particleRadius(star);
           star.x += star.vx;
           star.y += star.vy;
           if (
-            star.x < -star.size ||
-            star.x > width + star.size ||
-            star.y < -star.size ||
-            star.y > height + star.size
+            star.x < -radius ||
+            star.x > width + radius ||
+            star.y < (headerBottom - radius) ||
+            star.y > height + radius
           ) {
             respawnFromEdge(star);
+            if (star.y < headerBottom + radius) {
+              star.y = headerBottom + radius + random(2, 18);
+            }
           }
-          drawDiamond(star);
+          if (star.y < headerBottom + radius) {
+            star.y = headerBottom + radius + random(1, 6);
+            if (star.vy < 0) {
+              star.vy = Math.abs(star.vy);
+            }
+          }
+          drawDiamond(star, remaining);
+        }
+        for (let i = burstParticles.length - 1; i >= 0; i -= 1) {
+          const burst = burstParticles[i];
+          const elapsed = now - burst.createdAt;
+          const lifeProgress = elapsed / burst.lifespanMs;
+          if (lifeProgress >= 1) {
+            burstParticles.splice(i, 1);
+            continue;
+          }
+          burst.x += burst.vx;
+          burst.y += burst.vy;
+          drawDiamond(burst, 1 - lifeProgress);
         }
         context.globalAlpha = 1;
         window.requestAnimationFrame(step);
       }
 
+      nextLogoSpawnMs = initializeNextLogoSpawn();
       resizeCanvas();
       for (let i = 0; i < STAR_COUNT; i += 1) {
-        stars.push(createStar(random(0, width), random(0, height)));
+        stars.push(createStar(random(0, width), random(headerBottom + 4, height)));
       }
+      window.addEventListener("logo-star-burst", (event) => {
+        const detail = event.detail || {};
+        const originX = typeof detail.x === "number" ? detail.x : (width / 2);
+        const originY = typeof detail.y === "number" ? detail.y : (height / 2);
+        const burstColors = ["#FFD700", "#FA8072", "#666666"];
+        for (let i = 0; i < burstColors.length; i += 1) {
+          const baseAngle = random(0, Math.PI * 2);
+          const jitter = random(-0.45, 0.45);
+          const spawnJitterX = random(-18, 18);
+          const spawnJitterY = random(-10, 10);
+          burstParticles.push(
+            createBurstParticle(
+              originX + spawnJitterX,
+              originY + spawnJitterY,
+              burstColors[i],
+              baseAngle + jitter
+            )
+          );
+        }
+      });
       window.addEventListener("resize", resizeCanvas);
       window.requestAnimationFrame(step);
     })();
@@ -168,6 +365,7 @@
         return;
       }
       const username = {{ current_user.username | tojson }};
+      const scriptDisplayName = username === "Roxan" ? username : username.slice(1);
       scriptLink.addEventListener("click", (event) => {
         event.preventDefault();
         const popup = window.open("", "script-popup-window", "width=620,height=420,resizable=yes,scrollbars=yes");
@@ -193,7 +391,7 @@
   <div class="wrap">
     <div class="card">
       <h1>Script</h1>
-      <p>Hi my name is ${username}. I will be tracking your visit wait times today. We're working to improve your experience. I'm going to be standing in the background, simply observing.</p>
+      <p>Hi my name is ${scriptDisplayName}. I will be tracking your visit wait times today. We're working to improve your experience. I'm going to be standing in the background, simply observing.</p>
     </div>
   </div>
 </body>

@@ -14,8 +14,9 @@
   <form method="post" action="admin/override" class="inline-form">
     <label>Visit
       <select name="visit_id" id="override-visit-id" required>
+        <option value="" {% if not selected_visit_id %}selected{% endif %} disabled>Select Visit</option>
         {% for visit in visits %}
-          <option value="{{ visit.id }}" {% if selected_visit_id == visit.id %}selected{% endif %}>#{{ visit.id }} - {{ visit.mrn }} ({{ format_dt_minutes(visit.created_at) }}) {{ current_status(visit) }}</option>
+          <option value="{{ visit.id }}">#{{ visit.id }} - {{ visit.mrn }} ({{ format_dt_minutes(visit.created_at) }}) {{ current_status(visit) }}</option>
         {% endfor %}
       </select>
     </label>
@@ -30,20 +31,23 @@
       <input type="datetime-local" name="new_value" id="override-new-value" />
     </label>
     <label>Reason
-      <input type="text" name="reason" required />
+      <input type="text" name="reason" maxlength="500" required />
     </label>
     <button type="submit">Override</button>
+  </form>
+  <form method="post" action="admin/purge-zero-mrn" class="inline-form" onsubmit="return confirm('Delete all visits and logs for MRNs made only of zeroes?');">
+    <button type="submit" style="background-color:#b42318;">Delete All-Zero MRN Records & Logs</button>
+  </form>
+  <form method="post" action="admin/backup-db" class="inline-form">
+    <button type="submit">Create DB Backup</button>
   </form>
 </section>
 
 <section class="panel">
-  <h2>Audit Log{% if selected_visit_id %} for Visit #{{ selected_visit_id }}{% endif %}</h2>
-  {% if selected_visit_id %}
-  <form method="get" action="admin/audit-export" class="inline-form">
-    <input type="hidden" name="visit_id" value="{{ selected_visit_id }}" />
-    <button type="submit">Export Audit to Excel</button>
+  <h2>Audit Log for all Visits</h2>
+  <form method="get" action="admin/logs-export" class="inline-form">
+    <button type="submit">Export All Audit Logs to Excel</button>
   </form>
-  {% endif %}
   <table>
     <thead>
       <tr>
@@ -67,6 +71,32 @@
       </tr>
       {% else %}
       <tr><td colspan="6">No audit rows for selected visit.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>System Audit Log</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Performed At</th>
+        <th>User</th>
+        <th>Action</th>
+        <th>Details</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in admin_action_rows %}
+      <tr>
+        <td>{{ format_dt(row.performed_at) }}</td>
+        <td>{{ row.performed_by_user.username if row.performed_by_user else '' }}</td>
+        <td>{{ row.action_name }}</td>
+        <td>{{ row.details }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4">No system audit rows yet.</td></tr>
       {% endfor %}
     </tbody>
   </table>
