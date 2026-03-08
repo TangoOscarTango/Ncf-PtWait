@@ -193,7 +193,7 @@
               />
             </form>
           </td>
-          <td title="Visit Type: {{ row.visit.visit_type or 'N/A' }}&#10;Location: {{ row.visit.location.name }}&#10;Provider: {{ row.visit.provider.name }}">{{ row.visit.mrn }}</td>
+          <td title="Visit Type: {{ row.visit.visit_type or 'N/A' }}&#10;Location: {{ row.visit.location.name }}&#10;Provider: {{ row.visit.provider.name }}&#10;Arrived Recorded By: {{ row.visit.created_by_user.username if row.visit.created_by_user else 'Unknown' }}">{{ row.visit.mrn }}</td>
           <td>{{ row.status }}</td>
           <td>{{ format_dt(row.visit.arrived_at) or '' }}{% if row.visit.arrived_delay_note %}<div class="timestamp-note">{{ row.visit.arrived_delay_note }}</div>{% endif %}</td>
           <td>{{ format_dt(row.visit.ready_for_clinical_at) or '' }}{% if row.visit.ready_for_clinical_delay_note %}<div class="timestamp-note">{{ row.visit.ready_for_clinical_delay_note }}</div>{% endif %}</td>
