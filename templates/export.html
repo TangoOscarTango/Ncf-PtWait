@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <section class="panel">
-  <h2>Export All Visit Data to Excel</h2>
+  <h2>Export Visit Data to Excel</h2>
   <form method="post" action="export/download" class="inline-form">
     <label>Start Date <input type="date" name="start_date" value="{{ today }}" required /></label>
     <label>End Date <input type="date" name="end_date" value="{{ today }}" required /></label>

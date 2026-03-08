@@ -59,6 +59,9 @@ Internal FastAPI + Jinja2 + SQLite application for patient cycle-time tracking a
 - Keep app process on internal HTTP (`uvicorn ... --host 127.0.0.1 --port 8000` or internal LAN bind as needed).
 - Do not force HTTPS in app code unless your proxy/session forwarding model is changed and validated.
 - Do not publish internal/private IPs in shared documentation.
+- IIS + ARR requirement: ensure host header is preserved to upstream app, or login POSTs can fail with `Invalid origin`.
+- In `applicationHost.config`, set ARR proxy to include `preserveHostHeader="true"`:
+  `<proxy enabled="true" preserveHostHeader="true" reverseRewriteHostInResponseHeaders="false" />`
 
 ## Run Locally (Windows)
 1. Create and activate venv:

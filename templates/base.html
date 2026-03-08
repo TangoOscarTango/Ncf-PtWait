@@ -368,7 +368,7 @@
       const username = {{ current_user.username | tojson }};
       const baseScriptName = username === "Roxan"
         ? username
-        : (username.length > 1 ? username.slice(0, -1) : username);
+        : (username.length > 1 ? username.slice(1) : username);
       const scriptDisplayName = `Ms. ${baseScriptName}`;
       scriptLink.addEventListener("click", (event) => {
         event.preventDefault();
