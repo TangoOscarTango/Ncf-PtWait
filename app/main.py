@@ -10,10 +10,11 @@ from urllib.parse import urlencode
 from collections import defaultdict, deque
 from urllib.parse import urlparse
 
-from fastapi import Depends, FastAPI, Form, Query, Request
+from fastapi import Depends, FastAPI, File, Form, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from openpyxl import load_workbook
 from sqlalchemy import text
 from sqlalchemy.orm import Session, joinedload
 from starlette.middleware.sessions import SessionMiddleware
@@ -25,9 +26,11 @@ from app.seed import seed_initial_data
 from app.services import (
     build_audit_export,
     build_logs_export,
+    build_user_import_guide,
     DELAY_NOTE_FIELDS,
     FIELD_LABELS,
     TIME_FIELDS,
+    USER_IMPORT_REQUIRED_HEADERS,
     ValidationError,
     build_export,
     current_status,
@@ -66,6 +69,8 @@ MAX_LOCATION_NAME_LENGTH = 120
 MAX_PROVIDER_NAME_LENGTH = 120
 MAX_VISIT_TYPE_LENGTH = 120
 MAX_EXPORT_RANGE_DAYS = 366
+MAX_USER_IMPORT_FILE_BYTES = 2 * 1024 * 1024
+MAX_USER_IMPORT_ROWS = 2000
 SESSION_IDLE_TIMEOUT_SECONDS = 60 * 60
 SESSION_ABSOLUTE_TIMEOUT_SECONDS = 60 * 60 * 12
 RATE_LIMIT_RULES = {
@@ -1542,6 +1547,163 @@ def parameters_create_user(
     log_admin_action(db, user, "create_user", f"Created user {candidate} with role {role.value}.")
     db.commit()
     set_flash(request, "success", f"User {candidate} created.")
+    return RedirectResponse(url="/parameters", status_code=303)
+
+
+@app.get("/parameters/users/import-guide")
+def parameters_export_user_import_guide(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    user = require_admin(request, db)
+    if isinstance(user, RedirectResponse):
+        return user
+
+    data = build_user_import_guide()
+    headers = {
+        "Content-Disposition": 'attachment; filename="user_import_guide.xlsx"',
+        "Cache-Control": "no-store",
+    }
+    return StreamingResponse(
+        BytesIO(data),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers=headers,
+    )
+
+
+@app.post("/parameters/users/import")
+def parameters_import_users(
+    request: Request,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    user = require_admin(request, db)
+    if isinstance(user, RedirectResponse):
+        return user
+
+    filename = (file.filename or "").strip().lower()
+    if not filename.endswith((".xlsx", ".xlsm")):
+        set_flash(request, "error", "Please upload an .xlsx or .xlsm Excel file.")
+        return RedirectResponse(url="/parameters", status_code=303)
+
+    payload = file.file.read(MAX_USER_IMPORT_FILE_BYTES + 1)
+    if len(payload) > MAX_USER_IMPORT_FILE_BYTES:
+        set_flash(request, "error", "File is too large. Max size is 2MB.")
+        return RedirectResponse(url="/parameters", status_code=303)
+
+    try:
+        workbook = load_workbook(BytesIO(payload), data_only=True)
+        worksheet = workbook.active
+    except Exception:
+        set_flash(request, "error", "Invalid Excel file.")
+        return RedirectResponse(url="/parameters", status_code=303)
+
+    header_row = next(worksheet.iter_rows(min_row=1, max_row=1, values_only=True), None)
+    if not header_row:
+        set_flash(request, "error", "Excel file is empty.")
+        return RedirectResponse(url="/parameters", status_code=303)
+
+    header_index: dict[str, int] = {}
+    for idx, raw in enumerate(header_row):
+        normalized = str(raw or "").strip().lower()
+        if normalized:
+            header_index[normalized] = idx
+
+    missing_headers = [title for title in USER_IMPORT_REQUIRED_HEADERS if title.lower() not in header_index]
+    if missing_headers:
+        set_flash(request, "error", f"Missing required column(s): {', '.join(missing_headers)}.")
+        return RedirectResponse(url="/parameters", status_code=303)
+
+    username_idx = header_index["username"]
+    role_idx = header_index["role"]
+    password_idx = header_index["temporary password"]
+
+    existing_usernames = {name for (name,) in db.query(User.username).all()}
+    seen_in_file: set[str] = set()
+    created_usernames: list[str] = []
+    skipped_existing = 0
+    row_errors: list[str] = []
+
+    for row_number, row in enumerate(worksheet.iter_rows(min_row=2, values_only=True), start=2):
+        if row_number > MAX_USER_IMPORT_ROWS + 1:
+            row_errors.append(f"Row {row_number}: too many rows (max {MAX_USER_IMPORT_ROWS}).")
+            break
+        if not any(value is not None and str(value).strip() for value in row):
+            continue
+
+        username = str(row[username_idx] or "").strip()
+        role_value = str(row[role_idx] or "").strip().lower()
+        password = str(row[password_idx] or "")
+
+        if not username:
+            row_errors.append(f"Row {row_number}: Username is required.")
+            continue
+        if len(username) > MAX_USERNAME_LENGTH:
+            row_errors.append(f"Row {row_number}: Username exceeds {MAX_USERNAME_LENGTH} characters.")
+            continue
+        if len(password) < MIN_PASSWORD_LENGTH:
+            row_errors.append(f"Row {row_number}: Temporary Password must be at least {MIN_PASSWORD_LENGTH} characters.")
+            continue
+        if len(password) > MAX_PASSWORD_LENGTH:
+            row_errors.append(f"Row {row_number}: Temporary Password exceeds {MAX_PASSWORD_LENGTH} characters.")
+            continue
+
+        try:
+            parsed_role = RoleEnum(role_value)
+        except Exception:
+            row_errors.append(f"Row {row_number}: Role must be one of admin, fd, nurse, auditor.")
+            continue
+
+        if username in existing_usernames or username in seen_in_file:
+            skipped_existing += 1
+            continue
+
+        db.add(
+            User(
+                username=username,
+                password_hash=hash_password(password),
+                role=parsed_role,
+                is_active=True,
+                must_change_password=True,
+            )
+        )
+        seen_in_file.add(username)
+        created_usernames.append(username)
+
+    if created_usernames:
+        sample_users = ", ".join(created_usernames[:10])
+        detail_suffix = "" if len(created_usernames) <= 10 else f" (+{len(created_usernames) - 10} more)"
+        log_admin_action(
+            db,
+            user,
+            "import_users",
+            f"Imported {len(created_usernames)} users: {sample_users}{detail_suffix}. "
+            f"Skipped existing/duplicate: {skipped_existing}. Errors: {len(row_errors)}.",
+        )
+        db.commit()
+
+    if row_errors:
+        error_preview = " ".join(row_errors[:3])
+        if len(row_errors) > 3:
+            error_preview += f" (+{len(row_errors) - 3} more errors)"
+        if created_usernames:
+            set_flash(
+                request,
+                "success",
+                f"Imported {len(created_usernames)} users. Skipped {skipped_existing}. {error_preview}",
+            )
+        else:
+            set_flash(request, "error", f"No users imported. {error_preview}")
+        return RedirectResponse(url="/parameters", status_code=303)
+
+    if created_usernames:
+        set_flash(
+            request,
+            "success",
+            f"Imported {len(created_usernames)} users. Skipped {skipped_existing} existing/duplicate users.",
+        )
+    else:
+        set_flash(request, "error", "No users imported. All rows were duplicates or empty.")
     return RedirectResponse(url="/parameters", status_code=303)
 
 

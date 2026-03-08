@@ -71,6 +71,7 @@ OTHER_SLOT_ORDER = ["Lab", "Ultrasound", "X-Ray", "Other 1", "Other 2"]
 MAX_OTHER_DESTINATION_LENGTH = 120
 MAX_NOTE_LENGTH = 500
 MAX_OVERRIDE_REASON_LENGTH = 500
+USER_IMPORT_REQUIRED_HEADERS = ["Username", "Role", "Temporary Password"]
 
 
 class ValidationError(Exception):
@@ -660,6 +661,31 @@ def build_logs_export(
                 row.details,
             ]
         )
+
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    return bio.read()
+
+
+def build_user_import_guide() -> bytes:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "UsersImportGuide"
+
+    ws.append(USER_IMPORT_REQUIRED_HEADERS)
+    ws.append(["admin_example", "admin", "TempPass123!"])
+    ws.append(["auditor_example", "auditor", "TempPass123!"])
+    ws.append(["fd_example", "fd", "TempPass123!"])
+    ws.append(["nurse_example", "nurse", "TempPass123!"])
+
+    ws.freeze_panes = "A2"
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+
+    ws.column_dimensions[get_column_letter(1)].width = 28.0
+    ws.column_dimensions[get_column_letter(2)].width = 18.0
+    ws.column_dimensions[get_column_letter(3)].width = 30.0
 
     bio = BytesIO()
     wb.save(bio)

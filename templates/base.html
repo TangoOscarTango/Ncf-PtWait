@@ -366,7 +366,10 @@
         return;
       }
       const username = {{ current_user.username | tojson }};
-      const scriptDisplayName = username === "Roxan" ? username : username.slice(1);
+      const baseScriptName = username === "Roxan"
+        ? username
+        : (username.length > 1 ? username.slice(0, -1) : username);
+      const scriptDisplayName = `Ms. ${baseScriptName}`;
       scriptLink.addEventListener("click", (event) => {
         event.preventDefault();
         const popup = window.open("", "script-popup-window", "width=620,height=420,resizable=yes,scrollbars=yes");

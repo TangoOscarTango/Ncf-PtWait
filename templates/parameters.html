@@ -34,6 +34,15 @@
     </label>
     <button type="submit">Create User</button>
   </form>
+  <form method="post" action="parameters/users/import" enctype="multipart/form-data" class="inline-form">
+    <label>Import Users (Excel)
+      <input type="file" name="file" accept=".xlsx,.xlsm" required />
+    </label>
+    <button type="submit">Import Spreadsheet</button>
+  </form>
+  <form method="get" action="parameters/users/import-guide" class="inline-form">
+    <button type="submit">Export Guide Spreadsheet</button>
+  </form>
 </section>
 
 <section class="panel">
