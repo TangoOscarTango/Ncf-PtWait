@@ -1415,6 +1415,7 @@ def export_download(
     end_date: str = Form(...),
     location_id: str | None = Form(default=None),
     provider_id: str | None = Form(default=None),
+    include_legacy_columns: bool = Form(default=False),
     db: Session = Depends(get_db),
 ):
     user = require_user(request, db)
@@ -1451,7 +1452,7 @@ def export_download(
         query = query.filter(Visit.provider_id == parsed_provider_id)
 
     try:
-        data = build_export(query.all())
+        data = build_export(query.all(), include_legacy_columns=include_legacy_columns)
     except Exception:
         return Response("Excel export failed.", status_code=500)
 

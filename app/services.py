@@ -447,6 +447,7 @@ def minutes_between(start: datetime | None, end: datetime | None) -> float | Non
 
 def build_export(
     visits: list[Visit],
+    include_legacy_columns: bool = False,
 ) -> bytes:
     wb = Workbook()
     ws = wb.active
@@ -500,6 +501,13 @@ def build_export(
         "Checkout At",
         "Checkout Delay Reason",
     ]
+    if include_legacy_columns:
+        headers.extend(
+            [
+                "Other Begin Delay Reason (Legacy)",
+                "Other End Delay Reason (Legacy)",
+            ]
+        )
     ws.append(headers)
     ws.freeze_panes = "A2"
 
@@ -511,56 +519,62 @@ def build_export(
 
     for visit in visits:
         slot_values = _other_slot_values(visit)
-        ws.append(
-            [
-                visit.mrn,
-                format_dt(visit.created_at),
-                visit.visit_type,
-                visit.location.name,
-                visit.provider.name,
-                visit.created_by_user.username if visit.created_by_user else "",
-                minutes_between(visit.arrived_at, visit.checkout_at),
-                minutes_between(visit.intake_complete_at, visit.provider_in_at),
-                minutes_between(visit.ready_for_clinical_at, visit.intake_complete_at),
-                minutes_between(visit.arrived_at, visit.ready_for_clinical_at),
-                minutes_between(visit.provider_in_at, visit.provider_out_at),
-                other_duration_minutes(visit),
-                lab_duration_minutes(visit),
-                format_dt(visit.arrived_at),
-                visit.arrived_delay_note,
-                format_dt(visit.ready_for_clinical_at),
-                visit.ready_for_clinical_delay_note,
-                format_dt(visit.intake_begin_at),
-                visit.intake_begin_delay_note,
-                format_dt(visit.intake_complete_at),
-                visit.intake_complete_delay_note,
-                format_dt(visit.provider_in_at),
-                visit.provider_in_delay_note,
-                slot_values.get("Lab", {}).get("begin_at"),
-                slot_values.get("Lab", {}).get("end_at"),
-                slot_values.get("Lab", {}).get("end_note"),
-                slot_values.get("Ultrasound", {}).get("begin_at"),
-                slot_values.get("Ultrasound", {}).get("end_at"),
-                slot_values.get("Ultrasound", {}).get("end_note"),
-                slot_values.get("X-Ray", {}).get("begin_at"),
-                slot_values.get("X-Ray", {}).get("end_at"),
-                slot_values.get("X-Ray", {}).get("end_note"),
-                slot_values.get("Other 1", {}).get("begin_at"),
-                slot_values.get("Other 1", {}).get("begin_note"),
-                slot_values.get("Other 1", {}).get("end_at"),
-                slot_values.get("Other 1", {}).get("end_note"),
-                slot_values.get("Other 2", {}).get("begin_at"),
-                slot_values.get("Other 2", {}).get("begin_note"),
-                slot_values.get("Other 2", {}).get("end_at"),
-                slot_values.get("Other 2", {}).get("end_note"),
-                format_dt(visit.provider_out_at),
-                visit.provider_out_delay_note,
-                format_dt(visit.lab_complete_at),
-                visit.lab_complete_delay_note,
-                format_dt(visit.checkout_at),
-                visit.checkout_delay_note,
-            ]
-        )
+        row = [
+            visit.mrn,
+            format_dt(visit.created_at),
+            visit.visit_type,
+            visit.location.name,
+            visit.provider.name,
+            visit.created_by_user.username if visit.created_by_user else "",
+            minutes_between(visit.arrived_at, visit.checkout_at),
+            minutes_between(visit.intake_complete_at, visit.provider_in_at),
+            minutes_between(visit.ready_for_clinical_at, visit.intake_complete_at),
+            minutes_between(visit.arrived_at, visit.ready_for_clinical_at),
+            minutes_between(visit.provider_in_at, visit.provider_out_at),
+            other_duration_minutes(visit),
+            lab_duration_minutes(visit),
+            format_dt(visit.arrived_at),
+            visit.arrived_delay_note,
+            format_dt(visit.ready_for_clinical_at),
+            visit.ready_for_clinical_delay_note,
+            format_dt(visit.intake_begin_at),
+            visit.intake_begin_delay_note,
+            format_dt(visit.intake_complete_at),
+            visit.intake_complete_delay_note,
+            format_dt(visit.provider_in_at),
+            visit.provider_in_delay_note,
+            slot_values.get("Lab", {}).get("begin_at"),
+            slot_values.get("Lab", {}).get("end_at"),
+            slot_values.get("Lab", {}).get("end_note"),
+            slot_values.get("Ultrasound", {}).get("begin_at"),
+            slot_values.get("Ultrasound", {}).get("end_at"),
+            slot_values.get("Ultrasound", {}).get("end_note"),
+            slot_values.get("X-Ray", {}).get("begin_at"),
+            slot_values.get("X-Ray", {}).get("end_at"),
+            slot_values.get("X-Ray", {}).get("end_note"),
+            slot_values.get("Other 1", {}).get("begin_at"),
+            slot_values.get("Other 1", {}).get("begin_note"),
+            slot_values.get("Other 1", {}).get("end_at"),
+            slot_values.get("Other 1", {}).get("end_note"),
+            slot_values.get("Other 2", {}).get("begin_at"),
+            slot_values.get("Other 2", {}).get("begin_note"),
+            slot_values.get("Other 2", {}).get("end_at"),
+            slot_values.get("Other 2", {}).get("end_note"),
+            format_dt(visit.provider_out_at),
+            visit.provider_out_delay_note,
+            format_dt(visit.lab_complete_at),
+            visit.lab_complete_delay_note,
+            format_dt(visit.checkout_at),
+            visit.checkout_delay_note,
+        ]
+        if include_legacy_columns:
+            row.extend(
+                [
+                    visit.other_begin_delay_note,
+                    visit.other_end_delay_note,
+                ]
+            )
+        ws.append(row)
 
     bio = BytesIO()
     wb.save(bio)
